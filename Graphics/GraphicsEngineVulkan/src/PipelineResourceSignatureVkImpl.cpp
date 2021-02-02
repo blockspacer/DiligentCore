@@ -33,7 +33,6 @@
 #include "SamplerVkImpl.hpp"
 #include "TextureViewVkImpl.hpp"
 #include "TopLevelASVkImpl.hpp"
-#include "BasicMath.hpp"
 #include "DynamicLinearAllocator.hpp"
 #include "SPIRVShaderResources.hpp"
 
@@ -64,7 +63,7 @@ inline bool ResourcesCompatible(const PipelineResourceDesc& lhs, const PipelineR
            lhs.ArraySize    == rhs.ArraySize    &&
            lhs.ResourceType == rhs.ResourceType &&
            lhs.VarType      == rhs.VarType      &&
-           lhs.Flags        == lhs.Flags;
+           lhs.Flags        == rhs.Flags;
     // clang-format on
 }
 
@@ -250,12 +249,12 @@ inline PipelineResourceSignatureVkImpl::CACHE_GROUP PipelineResourceSignatureVkI
     if (WithDynamicOffset && !UseTexelBuffer)
     {
         if (Res.ResourceType == SHADER_RESOURCE_TYPE_CONSTANT_BUFFER)
-            return static_cast<CACHE_GROUP>(SetId * 3 + CACHE_GROUP_DYN_UB);
+            return static_cast<CACHE_GROUP>(SetId * CACHE_GROUP_COUNT_PER_Type + CACHE_GROUP_DYN_UB);
 
         if (Res.ResourceType == SHADER_RESOURCE_TYPE_BUFFER_SRV || Res.ResourceType == SHADER_RESOURCE_TYPE_BUFFER_UAV)
-            return static_cast<CACHE_GROUP>(SetId * 3 + CACHE_GROUP_DYN_SB);
+            return static_cast<CACHE_GROUP>(SetId * CACHE_GROUP_COUNT_PER_Type + CACHE_GROUP_DYN_SB);
     }
-    return static_cast<CACHE_GROUP>(SetId * 3 + CACHE_GROUP_OTHER);
+    return static_cast<CACHE_GROUP>(SetId * CACHE_GROUP_COUNT_PER_Type + CACHE_GROUP_OTHER);
 }
 
 inline PipelineResourceSignatureVkImpl::DESCRIPTOR_SET_ID PipelineResourceSignatureVkImpl::VarTypeToDescriptorSetId(SHADER_RESOURCE_VARIABLE_TYPE VarType)
@@ -475,7 +474,7 @@ void PipelineResourceSignatureVkImpl::CreateSetLayouts(const CacheOffsetsType& C
         VERIFY(i == 0 || ResDesc.VarType >= m_Desc.Resources[i - 1].VarType, "Resources must be sorted by variable type");
 
         // If all resources are dynamic, then the signature contains only one descriptor set layout with index 0,
-        // so remap SetIdx to the actual descriptor set index.
+        // so remap SetId to the actual descriptor set index.
         VERIFY_EXPR(DSMapping[SetId] < MAX_DESCRIPTOR_SETS);
 
         // The sampler may not be yet initialized, but this is OK as all resources are initialized
@@ -908,22 +907,7 @@ void PipelineResourceSignatureVkImpl::InitSRBResourceCache(ShaderResourceCacheVk
     }
 }
 
-SHADER_TYPE PipelineResourceSignatureVkImpl::GetActiveShaderStageType(Uint32 StageIndex) const
-{
-    VERIFY_EXPR(StageIndex < m_NumShaderStages);
 
-    SHADER_TYPE Stages = m_ShaderStages;
-    for (Uint32 Index = 0; Stages != SHADER_TYPE_UNKNOWN; ++Index)
-    {
-        auto StageBit = ExtractLSB(Stages);
-
-        if (Index == StageIndex)
-            return StageBit;
-    }
-
-    UNEXPECTED("Index is out of range");
-    return SHADER_TYPE_UNKNOWN;
-}
 
 void PipelineResourceSignatureVkImpl::InitializeStaticSRBResources(ShaderResourceCacheVk& DstResourceCache) const
 {
@@ -957,8 +941,11 @@ void PipelineResourceSignatureVkImpl::InitializeStaticSRBResources(ShaderResourc
             if (!pObject)
                 LOG_ERROR_MESSAGE("No resource is assigned to static shader variable '", GetShaderResourcePrintName(ResDesc, ArrInd), "' in pipeline resource signature '", m_Desc.Name, "'.");
 
-            const auto     DstCacheOffset  = Attr.CacheOffset(DstCacheType) + ArrInd;
-            IDeviceObject* pCachedResource = DstDescrSet.GetResource(DstCacheOffset).pObject;
+            const auto DstCacheOffset = Attr.CacheOffset(DstCacheType) + ArrInd;
+            auto&      DstCachedRes   = DstDescrSet.GetResource(DstCacheOffset);
+            VERIFY_EXPR(SrcCachedRes.Type == DstCachedRes.Type);
+
+            IDeviceObject* pCachedResource = DstCachedRes.pObject;
             if (pCachedResource != pObject)
             {
                 VERIFY(pCachedResource == nullptr, "Static resource has already been initialized, and the new resource does not match previously assigned resource");
@@ -1226,7 +1213,9 @@ private:
 void BindResourceHelper::BindResource(IDeviceObject* pObj) const
 {
 #ifdef DILIGENT_DEBUG
-    if (ResourceCache.GetContentType() == PipelineResourceSignatureVkImpl::CacheContentType::SRB)
+    using CacheContentType = PipelineResourceSignatureVkImpl::CacheContentType;
+
+    if (ResourceCache.GetContentType() == CacheContentType::SRB)
     {
         if (ResDesc.VarType == SHADER_RESOURCE_VARIABLE_TYPE_STATIC || ResDesc.VarType == SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE)
         {
@@ -1234,7 +1223,7 @@ void BindResourceHelper::BindResource(IDeviceObject* pObj) const
             // Dynamic variables do not have vulkan descriptor set only until they are assigned one the first time
         }
     }
-    else if (ResourceCache.GetContentType() == PipelineResourceSignatureVkImpl::CacheContentType::Signature)
+    else if (ResourceCache.GetContentType() == CacheContentType::Signature)
     {
         VERIFY(vkDescrSet == VK_NULL_HANDLE, "Static shader resource cache should not have vulkan descriptor set allocation");
     }
@@ -1529,7 +1518,7 @@ void BindResourceHelper::CacheImage(IDeviceObject* pTexView) const
             UpdateDescriptorHandle(&DescrImgInfo, nullptr, nullptr);
         }
 
-        if (Attribs.SamplerInd != PipelineResourceSignatureVkImpl::ResourceAttribs::InvalidSamplerInd)
+        if (Attribs.IsCombinedWithSampler())
         {
             VERIFY(DstRes.Type == DescriptorType::SeparateImage,
                    "Only separate images can be assigned separate samplers when using HLSL-style combined samplers.");
@@ -1705,6 +1694,29 @@ void PipelineResourceSignatureVkImpl::BindResource(IDeviceObject*         pObj,
         ResourceCache};
 
     Helper.BindResource(pObj);
+}
+
+bool PipelineResourceSignatureVkImpl::IsBound(Uint32                 ArrayIndex,
+                                              Uint32                 ResIndex,
+                                              ShaderResourceCacheVk& ResourceCache) const
+{
+    const auto&  ResDesc     = GetResourceDesc(ResIndex);
+    const auto&  Attribs     = GetResourceAttribs(ResIndex);
+    const Uint32 CacheOffset = Attribs.CacheOffset(ResourceCache.GetContentType());
+
+    VERIFY_EXPR(ArrayIndex < ResDesc.ArraySize);
+
+    if (Attribs.DescrSet < ResourceCache.GetNumDescriptorSets())
+    {
+        const auto& Set = ResourceCache.GetDescriptorSet(Attribs.DescrSet);
+        if (CacheOffset + ArrayIndex < Set.GetSize())
+        {
+            const auto& CachedRes = Set.GetResource(CacheOffset + ArrayIndex);
+            return CachedRes.pObject != nullptr;
+        }
+    }
+
+    return false;
 }
 
 #ifdef DILIGENT_DEVELOPMENT

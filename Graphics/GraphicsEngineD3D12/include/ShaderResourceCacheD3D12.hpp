@@ -138,20 +138,18 @@ public:
         }
 
         inline const Resource& GetResource(Uint32                           OffsetFromTableStart,
-                                           const D3D12_DESCRIPTOR_HEAP_TYPE dbgDescriptorHeapType,
-                                           const SHADER_TYPE                dbgRefShaderType) const
+                                           const D3D12_DESCRIPTOR_HEAP_TYPE dbgDescriptorHeapType) const
         {
             VERIFY(m_dbgHeapType == dbgDescriptorHeapType, "Incosistent descriptor heap type");
-            VERIFY(dbgRefShaderType == SHADER_TYPE_UNKNOWN || m_dbgShaderType == SHADER_TYPE_UNKNOWN || m_dbgShaderType == dbgRefShaderType, "Incosistent shader type");
+            //VERIFY(dbgRefShaderType == SHADER_TYPE_UNKNOWN || m_dbgShaderType == SHADER_TYPE_UNKNOWN || m_dbgShaderType == dbgRefShaderType, "Incosistent shader type");
 
             VERIFY(OffsetFromTableStart < m_NumResources, "Root table is not large enough to store descriptor at offset ", OffsetFromTableStart);
             return m_pResources[OffsetFromTableStart];
         }
         inline Resource& GetResource(Uint32                           OffsetFromTableStart,
-                                     const D3D12_DESCRIPTOR_HEAP_TYPE dbgDescriptorHeapType,
-                                     const SHADER_TYPE                dbgRefShaderType)
+                                     const D3D12_DESCRIPTOR_HEAP_TYPE dbgDescriptorHeapType)
         {
-            return const_cast<Resource&>(const_cast<const RootTable*>(this)->GetResource(OffsetFromTableStart, dbgDescriptorHeapType, dbgRefShaderType));
+            return const_cast<Resource&>(const_cast<const RootTable*>(this)->GetResource(OffsetFromTableStart, dbgDescriptorHeapType));
         }
 
         inline Uint32 GetSize() const { return m_NumResources; }
@@ -166,7 +164,7 @@ public:
         {
             VERIFY_EXPR(m_NumResources == MaxOffset);
             m_dbgHeapType   = dbgDescriptorHeapType;
-            m_dbgShaderType = dbgRefShaderType;
+            //m_dbgShaderType = dbgRefShaderType;
         }
 
         D3D12_DESCRIPTOR_HEAP_TYPE DbgGetHeapType() const { return m_dbgHeapType; }
@@ -177,7 +175,7 @@ public:
     private:
 #ifdef DILIGENT_DEBUG
         D3D12_DESCRIPTOR_HEAP_TYPE m_dbgHeapType   = D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES;
-        SHADER_TYPE                m_dbgShaderType = SHADER_TYPE_UNKNOWN;
+        //SHADER_TYPE                m_dbgShaderType = SHADER_TYPE_UNKNOWN;
 #endif
 
         Resource* const m_pResources = nullptr;

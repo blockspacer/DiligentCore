@@ -424,8 +424,6 @@ private:
         // Indicates if root views have been committed since the time SRB
         // has been committed.
         bool bRootViewsCommitted = false;
-
-        class ShaderResourceCacheD3D12* pCommittedResourceCache = nullptr;
     } m_State;
 
     CComPtr<ID3D12CommandSignature> m_pDrawIndirectSignature;

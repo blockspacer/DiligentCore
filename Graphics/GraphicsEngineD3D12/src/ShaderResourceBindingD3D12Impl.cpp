@@ -66,7 +66,7 @@ ShaderResourceBindingD3D12Impl::ShaderResourceBindingD3D12Impl(IReferenceCounter
 
         auto& SRBMemAllocator            = pPRS->GetSRBMemoryAllocator();
         auto& ResourceCacheDataAllocator = SRBMemAllocator.GetResourceCacheDataAllocator(0);
-        pPRS->InitResourceCache(m_ShaderResourceCache, ResourceCacheDataAllocator, pPRS->GetDesc().Name);
+        pPRS->InitSRBResourceCache(m_ShaderResourceCache, ResourceCacheDataAllocator, pPRS->GetDesc().Name);
 
         for (Uint32 s = 0; s < m_NumShaders; ++s)
         {

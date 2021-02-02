@@ -104,7 +104,7 @@ void ShaderVariableManagerD3D12::Initialize(const PipelineResourceSignatureD3D12
 
                 if (!(Res.ShaderStages & ShaderType))
                     continue;
-                
+
                 if (!UsingSeparateSamplers && Res.ResourceType == SHADER_RESOURCE_TYPE_SAMPLER)
                     continue;
 
@@ -214,7 +214,7 @@ void ShaderVariableManagerD3D12::BindResources(IResourceMapping* pResourceMappin
                 if ((Flags & BIND_SHADER_RESOURCES_VERIFY_ALL_RESOLVED) && !Var.IsBound(ArrInd))
                 {
                     LOG_ERROR_MESSAGE("Unable to bind resource to shader variable '",
-                                      PipelineResourceSignatureD3D12Impl::GetPrintName(Res, ArrInd),
+                                      GetShaderResourcePrintName(Res, ArrInd),
                                       "': resource is not found in the resource mapping. "
                                       "Do not use BIND_SHADER_RESOURCES_VERIFY_ALL_RESOLVED flag to suppress the message if this is not an issue.");
                 }
@@ -227,23 +227,32 @@ void ShaderVariableManagerD3D12::BindResources(IResourceMapping* pResourceMappin
 
 void ShaderVariableD3D12Impl::Set(IDeviceObject* pObject)
 {
-    // AZ TODO
+    BindResource(pObject, 0);
 }
 
 void ShaderVariableD3D12Impl::SetArray(IDeviceObject* const* ppObjects, Uint32 FirstElement, Uint32 NumElements)
 {
-    // AZ TODO
+    const auto& ResDesc = GetDesc();
+    VerifyAndCorrectSetArrayArguments(ResDesc.Name, ResDesc.ArraySize, FirstElement, NumElements);
+
+    for (Uint32 Elem = 0; Elem < NumElements; ++Elem)
+        BindResource(ppObjects[Elem], FirstElement + Elem);
 }
 
 bool ShaderVariableD3D12Impl::IsBound(Uint32 ArrayIndex) const
 {
-    // AZ TODO
-    return false;
+    auto* pSignature    = m_ParentManager.m_pSignature;
+    auto& ResourceCache = m_ParentManager.m_ResourceCache;
+
+    return pSignature->IsBound(ArrayIndex, m_ResIndex, ResourceCache);
 }
 
 void ShaderVariableD3D12Impl::BindResource(IDeviceObject* pObj, Uint32 ArrayIndex) const
 {
-    // AZ TODO
+    auto* pSignature    = m_ParentManager.m_pSignature;
+    auto& ResourceCache = m_ParentManager.m_ResourceCache;
+
+    pSignature->BindResource(pObj, ArrayIndex, m_ResIndex, ResourceCache);
 }
 
 } // namespace Diligent

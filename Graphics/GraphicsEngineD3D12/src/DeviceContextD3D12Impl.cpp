@@ -40,6 +40,7 @@
 #include "CommandListD3D12Impl.hpp"
 #include "DXGITypeConversions.hpp"
 #include "ShaderBindingTableD3D12Impl.hpp"
+#include "ShaderResourceBindingD3D12Impl.hpp"
 
 namespace Diligent
 {
@@ -272,8 +273,7 @@ void DeviceContextD3D12Impl::SetPipelineState(IPipelineState* pPipelineState)
             UNEXPECTED("unknown pipeline type");
     }
 
-    m_State.pCommittedResourceCache = nullptr;
-    m_State.bRootViewsCommitted     = false;
+    m_State.bRootViewsCommitted = false;
 }
 
 void DeviceContextD3D12Impl::TransitionShaderResources(IPipelineState* pPipelineState, IShaderResourceBinding* pShaderResourceBinding)
@@ -285,11 +285,11 @@ void DeviceContextD3D12Impl::TransitionShaderResources(IPipelineState* pPipeline
         return;
     }
 
-    // auto& Ctx = GetCmdContext();
+    auto& Ctx                  = GetCmdContext();
+    auto* pResBindingD3D12Impl = ValidatedCast<ShaderResourceBindingD3D12Impl>(pShaderResourceBinding);
+    auto& ResourceCache        = pResBindingD3D12Impl->GetResourceCache();
 
-    //auto* pPipelineStateD3D12 = ValidatedCast<PipelineStateD3D12Impl>(pPipelineState);
-
-    // AZ TODO
+    pResBindingD3D12Impl->GetSignature()->TransitionResources(ResourceCache, Ctx, true, false);
 }
 
 void DeviceContextD3D12Impl::CommitShaderResources(IShaderResourceBinding* pShaderResourceBinding, RESOURCE_STATE_TRANSITION_MODE StateTransitionMode)
@@ -297,8 +297,28 @@ void DeviceContextD3D12Impl::CommitShaderResources(IShaderResourceBinding* pShad
     if (!DeviceContextBase::CommitShaderResources(pShaderResourceBinding, StateTransitionMode, 0 /*Dummy*/))
         return;
 
-    //auto& Ctx = GetCmdContext();
+    auto* pResBindingD3D12Impl = ValidatedCast<ShaderResourceBindingD3D12Impl>(pShaderResourceBinding);
+    auto& ResourceCache        = pResBindingD3D12Impl->GetResourceCache();
+    auto& Ctx                  = GetCmdContext();
 
+    // AZ TODO:
+    // Ignore SRBs that contain no resources
+
+#ifdef DILIGENT_DEBUG
+    //ResourceCache.DbgVerifyDynamicBuffersCounter();
+#endif
+
+    if (StateTransitionMode == RESOURCE_STATE_TRANSITION_MODE_TRANSITION)
+    {
+        pResBindingD3D12Impl->GetSignature()->TransitionResources(ResourceCache, Ctx, true, false);
+    }
+#ifdef DILIGENT_DEVELOPMENT
+    else if (StateTransitionMode == RESOURCE_STATE_TRANSITION_MODE_VERIFY)
+    {
+        pResBindingD3D12Impl->GetSignature()->TransitionResources(ResourceCache, Ctx, false, true);
+    }
+#endif
+    
     // AZ TODO
 }
 

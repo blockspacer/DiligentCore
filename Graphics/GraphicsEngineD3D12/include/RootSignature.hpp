@@ -62,25 +62,8 @@ public:
         return m_Signatures[index].RawPtr<PipelineResourceSignatureD3D12Impl>();
     }
 
-    // Returns the index of the first space used by the given resource signature
-    Uint32 GetFirstSpaceIndex(const PipelineResourceSignatureD3D12Impl* pPRS) const
-    {
-        VERIFY_EXPR(pPRS != nullptr);
-        Uint32 Index = pPRS->GetDesc().BindingIndex;
-
-        VERIFY_EXPR(Index < m_SignatureCount);
-        VERIFY_EXPR(m_Signatures[Index] != nullptr);
-        VERIFY_EXPR(!m_Signatures[Index]->IsIncompatibleWith(*pPRS));
-
-        return m_FirstSpaceIndex[Index];
-    }
-
 private:
     CComPtr<ID3D12RootSignature> m_pd3d12RootSignature;
-
-    // Index of the first descriptor set, for every resource signature.
-    using FirstSpaceIndexArrayType             = std::array<Uint8, MAX_RESOURCE_SIGNATURES>;
-    FirstSpaceIndexArrayType m_FirstSpaceIndex = {};
 
     // The number of resource signatures used by this root signature
     // (Maximum is MAX_RESOURCE_SIGNATURES)

@@ -416,10 +416,18 @@ void PipelineStateD3D12Impl::InitRootSignature(const PipelineStateCreateInfo& Cr
                         PIPELINE_RESOURCE_FLAGS Flags;
                         GetShaderResourceTypeAndFlags(Res, Type, Flags);
 
+                        // Backward compatibility: only CBV with array size == 1 will be placed as root view.
+                        if ((Type == SHADER_RESOURCE_TYPE_CONSTANT_BUFFER && Res.BindCount > 1) ||
+                            Type == SHADER_RESOURCE_TYPE_BUFFER_SRV ||
+                            Type == SHADER_RESOURCE_TYPE_BUFFER_UAV)
+                        {
+                            Flags |= PIPELINE_RESOURCE_FLAG_NO_DYNAMIC_BUFFERS;
+                        }
+
                         if (Res.BindCount == 0)
                         {
-                            LOG_ERROR_AND_THROW("Is shader '", pShader->GetDesc().Name, "' resource '", Res.Name, "' uses runtime sized array,"
-                                                                                                                  " you must explicitlly set resource signature to specify array size");
+                            LOG_ERROR_AND_THROW("Is shader '", pShader->GetDesc().Name, "' resource '", Res.Name, "' uses runtime sized array, ",
+                                                "you must explicitlly set resource signature to specify array size");
                         }
 
                         Resources.emplace_back(Stage.Type, Res.Name, Res.BindCount, Type, DefaultVarType, Flags);
@@ -512,7 +520,6 @@ void PipelineStateD3D12Impl::InitRootSignature(const PipelineStateCreateInfo& Cr
             auto* pSignature = m_RootSig.GetSignature(Sig);
             if (pSignature != nullptr)
             {
-                const auto FirstSpace = m_RootSig.GetFirstSpaceIndex(pSignature);
                 for (Uint32 r = 0, ResCount = pSignature->GetTotalResourceCount(); r < ResCount; ++r)
                 {
                     const auto& ResDesc = pSignature->GetResourceDesc(r);
@@ -520,7 +527,7 @@ void PipelineStateD3D12Impl::InitRootSignature(const PipelineStateCreateInfo& Cr
 
                     if (ResDesc.ShaderStages & ShaderType)
                     {
-                        auto IsUnique = ResourceMap.emplace(HashMapStringKey{ResDesc.Name}, ResourceBinding::BindInfo{Attribs.BindPoint, FirstSpace + Attribs.Space}).second;
+                        auto IsUnique = ResourceMap.emplace(HashMapStringKey{ResDesc.Name}, ResourceBinding::BindInfo{Attribs.BindPoint, Attribs.Space}).second;
                         VERIFY(IsUnique, "resource name must be unique");
                     }
                 }

@@ -38,6 +38,7 @@
 namespace Diligent
 {
 
+class CommandContext;
 class RenderDeviceD3D12Impl;
 class ShaderResourceCacheD3D12;
 class ShaderVariableManagerD3D12;
@@ -65,7 +66,7 @@ public:
     struct ResourceAttribs
     {
     private:
-        static constexpr Uint32 _SpaceBits      = 1;
+        static constexpr Uint32 _SpaceBits      = 8;
         static constexpr Uint32 _BindPointBits  = 16;
         static constexpr Uint32 _RootIndexBits  = 16;
         static constexpr Uint32 _SamplerIndBits = 16;
@@ -77,38 +78,32 @@ public:
 
         // clang-format off
         const Uint32  BindPoint            : _BindPointBits;       // 
-        const Uint32  RootIndex            : _RootIndexBits;       // Root index
+        const Uint32  TableIndex           : _RootIndexBits;       // Root table index
         const Uint32  SamplerInd           : _SamplerIndBits;      // Index in m_Desc.Resources and m_pResourceAttribs
-        const Uint32  Space                : _SpaceBits;           // Space index (0 or 1)
-        const Uint32  SRBCacheOffset;                              // Offset in the SRB resource cache
-        const Uint32  StaticCacheOffset;                           // Offset in the static resource cache
+        const Uint32  Space                : _SpaceBits;           // Space index
+        const Uint32  OffsetFromTableStart;                        // Offset in the resource cache
         // clang-format on
 
         ResourceAttribs(Uint32 _BindPoint,
-                        Uint32 _RootIndex,
-                        Uint32 _SamplerInd,
                         Uint32 _Space,
-                        Uint32 _SRBCacheOffset,
-                        Uint32 _StaticCacheOffset) noexcept :
+                        Uint32 _TableIndex,
+                        Uint32 _SamplerInd,
+                        Uint32 _OffsetFromTableStart) noexcept :
             // clang-format off
-            BindPoint        {_BindPoint        },
-            RootIndex        {_RootIndex        },   
-            SamplerInd       {_SamplerInd       },
-            Space            {_Space            },
-            SRBCacheOffset   {_SRBCacheOffset   },
-            StaticCacheOffset{_StaticCacheOffset}
+            BindPoint           {_BindPoint           },
+            TableIndex          {_TableIndex          },   
+            SamplerInd          {_SamplerInd          },
+            Space               {_Space               },
+            OffsetFromTableStart{_OffsetFromTableStart}
         // clang-format on
         {
             VERIFY(BindPoint == _BindPoint, "Bind point (", _BindPoint, ") exceeds maximum representable value");
-            VERIFY(RootIndex == _RootIndex, "Root index (", _RootIndex, ") exceeds maximum representable value");
+            VERIFY(TableIndex == _TableIndex, "Root table index (", _TableIndex, ") exceeds maximum representable value");
             VERIFY(SamplerInd == _SamplerInd, "Sampler index (", _SamplerInd, ") exceeds maximum representable value");
             VERIFY(Space == _Space, "Space (", Space, ") exceeds maximum representable value");
         }
 
-        Uint32 CacheOffset(CacheContentType CacheType) const
-        {
-            return CacheType == CacheContentType::SRB ? SRBCacheOffset : StaticCacheOffset;
-        }
+        bool IsCombinedWithSampler() const { return SamplerInd != InvalidSamplerInd; }
     };
 
     const ResourceAttribs& GetResourceAttribs(Uint32 ResIndex) const
@@ -154,39 +149,59 @@ public:
         return m_SRBMemAllocator;
     }
 
-    void InitResourceCache(ShaderResourceCacheD3D12& ResourceCache,
-                           IMemoryAllocator&         CacheMemAllocator,
-                           const char*               DbgPipelineName) const;
+    void InitSRBResourceCache(ShaderResourceCacheD3D12& ResourceCache,
+                              IMemoryAllocator&         CacheMemAllocator,
+                              const char*               DbgPipelineName) const;
 
     void InitializeStaticSRBResources(ShaderResourceCacheD3D12& ResourceCache) const;
 
-    static String GetPrintName(const PipelineResourceDesc& ResDesc, Uint32 ArrayInd);
+    // Binds object pObj to resource with index ResIndex in m_Desc.Resources and
+    // array index ArrayIndex.
+    void BindResource(IDeviceObject*            pObj,
+                      Uint32                    ArrayIndex,
+                      Uint32                    ResIndex,
+                      ShaderResourceCacheD3D12& ResourceCache) const;
+
+    bool IsBound(Uint32                    ArrayIndex,
+                 Uint32                    ResIndex,
+                 ShaderResourceCacheD3D12& ResourceCache) const;
+
+    void TransitionResources(ShaderResourceCacheD3D12& ResourceCache, CommandContext& Ctx, bool PerformResourceTransitions, bool ValidateStates) const;
 
 private:
+    enum ROOT_TYPE : Uint8
+    {
+        ROOT_TYPE_STATIC  = 0,
+        ROOT_TYPE_DYNAMIC = 1,
+        ROOT_TYPE_COUNT
+    };
+    static ROOT_TYPE GetRootType(SHADER_RESOURCE_VARIABLE_TYPE VarType);
+
+
     class RootParameter
     {
     public:
-        RootParameter(D3D12_ROOT_PARAMETER_TYPE     ParameterType,
-                      Uint32                        RootIndex,
-                      UINT                          Register,
-                      UINT                          RegisterSpace,
-                      D3D12_SHADER_VISIBILITY       Visibility,
-                      SHADER_RESOURCE_VARIABLE_TYPE VarType) noexcept;
+        RootParameter(D3D12_ROOT_PARAMETER_TYPE ParameterType,
+                      Uint32                    RootIndex,
+                      UINT                      Register,
+                      UINT                      RegisterSpace,
+                      D3D12_SHADER_VISIBILITY   Visibility,
+                      ROOT_TYPE                 RootType) noexcept;
 
-        RootParameter(D3D12_ROOT_PARAMETER_TYPE     ParameterType,
-                      Uint32                        RootIndex,
-                      UINT                          Register,
-                      UINT                          RegisterSpace,
-                      UINT                          NumDwords,
-                      D3D12_SHADER_VISIBILITY       Visibility,
-                      SHADER_RESOURCE_VARIABLE_TYPE VarType) noexcept;
+        RootParameter(D3D12_ROOT_PARAMETER_TYPE ParameterType,
+                      Uint32                    RootIndex,
+                      UINT                      Register,
+                      UINT                      RegisterSpace,
+                      UINT                      NumDwords,
+                      D3D12_SHADER_VISIBILITY   Visibility,
+                      ROOT_TYPE                 RootType) noexcept;
 
-        RootParameter(D3D12_ROOT_PARAMETER_TYPE     ParameterType,
-                      Uint32                        RootIndex,
-                      UINT                          NumRanges,
-                      D3D12_DESCRIPTOR_RANGE*       pRanges,
-                      D3D12_SHADER_VISIBILITY       Visibility,
-                      SHADER_RESOURCE_VARIABLE_TYPE VarType) noexcept;
+        RootParameter(D3D12_ROOT_PARAMETER_TYPE ParameterType,
+                      Uint32                    RootIndex,
+                      UINT                      NumRanges,
+                      D3D12_DESCRIPTOR_RANGE*   pRanges,
+                      D3D12_SHADER_VISIBILITY   Visibility,
+                      ROOT_TYPE                 RootType) noexcept;
 
         RootParameter(const RootParameter& RP) noexcept;
 
@@ -200,11 +215,11 @@ private:
         void SetDescriptorRange(UINT                        RangeIndex,
                                 D3D12_DESCRIPTOR_RANGE_TYPE Type,
                                 UINT                        Register,
+                                UINT                        RegisterSpace,
                                 UINT                        Count,
-                                UINT                        Space                = 0,
                                 UINT                        OffsetFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND);
 
-        SHADER_RESOURCE_VARIABLE_TYPE GetShaderVariableType() const { return m_ShaderVarType; }
+        ROOT_TYPE GetRootType() const { return m_RootType; }
 
         Uint32 GetDescriptorTableSize() const;
 
@@ -221,11 +236,12 @@ private:
         size_t GetHash() const;
 
     private:
-        SHADER_RESOURCE_VARIABLE_TYPE m_ShaderVarType       = static_cast<SHADER_RESOURCE_VARIABLE_TYPE>(-1);
-        D3D12_ROOT_PARAMETER          m_RootParam           = {};
-        Uint32                        m_DescriptorTableSize = 0;
-        Uint32                        m_RootIndex           = static_cast<Uint32>(-1);
+        ROOT_TYPE            m_RootType            = static_cast<ROOT_TYPE>(-1);
+        D3D12_ROOT_PARAMETER m_RootParam           = {};
+        Uint32               m_DescriptorTableSize = 0;
+        Uint32               m_RootIndex           = static_cast<Uint32>(-1);
     };
+
 
     class RootParamsManager
     {
@@ -266,16 +282,17 @@ private:
             return m_pRootViews[ViewInd];
         }
 
-        void AddRootView(D3D12_ROOT_PARAMETER_TYPE     ParameterType,
-                         Uint32                        RootIndex,
-                         UINT                          Register,
-                         D3D12_SHADER_VISIBILITY       Visibility,
-                         SHADER_RESOURCE_VARIABLE_TYPE VarType);
+        void AddRootView(D3D12_ROOT_PARAMETER_TYPE ParameterType,
+                         Uint32                    RootIndex,
+                         UINT                      Register,
+                         UINT                      RegisterSpace,
+                         D3D12_SHADER_VISIBILITY   Visibility,
+                         ROOT_TYPE                 RootType);
 
-        void AddRootTable(Uint32                        RootIndex,
-                          D3D12_SHADER_VISIBILITY       Visibility,
-                          SHADER_RESOURCE_VARIABLE_TYPE VarType,
-                          Uint32                        NumRangesInNewTable = 1);
+        void AddRootTable(Uint32                  RootIndex,
+                          D3D12_SHADER_VISIBILITY Visibility,
+                          ROOT_TYPE               RootType,
+                          Uint32                  NumRangesInNewTable = 1);
 
         void AddDescriptorRanges(Uint32 RootTableInd, Uint32 NumExtraRanges = 1);
 
@@ -305,33 +322,33 @@ private:
 
     using CacheOffsetsType = std::array<Uint32, 2>;
 
-    void CreateLayout(const CacheOffsetsType& CacheSizes);
+    void CreateLayout();
 
     // Allocates root signature slot for the given resource.
     // For graphics and compute pipelines, BindPoint is the same as the original bind point.
     // For ray-tracing pipeline, BindPoint will be overriden. Bind points are then
     // remapped by PSO constructor.
-    void AllocateResourceSlot(SHADER_TYPE                   ShaderType,
-                              D3D12_SHADER_VISIBILITY       Visibility,
+    void AllocateResourceSlot(SHADER_TYPE                   ShaderStages,
                               SHADER_RESOURCE_VARIABLE_TYPE VariableType,
                               D3D12_DESCRIPTOR_RANGE_TYPE   RangeType,
                               Uint32                        ArraySize,
-                              Uint32                       BindPoint,
-                              Uint32                       Space,
-                              Uint32&                       RootIndex,
+                              bool                          IsRootView,
+                              Uint32                        BindPoint,
+                              Uint32                        Space,
+                              Uint32&                       TableIndex,
                               Uint32&                       OffsetFromTableStart);
 
     size_t CalculateHash() const;
 
     void Destruct();
 
+    std::vector<Uint32, STDAllocatorRawMem<Uint32>> GetCacheTableSizes() const;
+
 private:
     static constexpr Uint8  InvalidRootTableIndex    = static_cast<Uint8>(-1);
     static constexpr Uint32 MAX_SPACES_PER_SIGNATURE = 128;
 
     ResourceAttribs* m_pResourceAttribs = nullptr; // [m_Desc.NumResources]
-
-    SHADER_TYPE m_ShaderStages = SHADER_TYPE_UNKNOWN;
 
     std::array<Int8, MAX_SHADERS_IN_PIPELINE> m_StaticVarIndex = {-1, -1, -1, -1, -1, -1};
     static_assert(MAX_SHADERS_IN_PIPELINE == 6, "Please update the initializer list above");
@@ -340,21 +357,18 @@ private:
     // in m_RootParams (NOT the Root Index!), for every variable type
     // (static, mutable, dynamic) and every shader type,
     // or -1, if the table is not yet assigned to the combination
-    std::array<Uint8, SHADER_RESOURCE_VARIABLE_TYPE_NUM_TYPES* MAX_SHADERS_IN_PIPELINE> m_SrvCbvUavRootTablesMap = {};
+    std::array<Uint8, ROOT_TYPE_COUNT* MAX_SHADERS_IN_PIPELINE> m_SrvCbvUavRootTablesMap = {};
     // This array contains the same data for Sampler root table
-    std::array<Uint8, SHADER_RESOURCE_VARIABLE_TYPE_NUM_TYPES* MAX_SHADERS_IN_PIPELINE> m_SamplerRootTablesMap = {};
+    std::array<Uint8, ROOT_TYPE_COUNT* MAX_SHADERS_IN_PIPELINE> m_SamplerRootTablesMap = {};
 
-    // Resource counters for every descriptor range type used to assign bind points
-    // for ray-tracing shaders.
-    std::array<Uint32, D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER + 1> m_NumResources = {};
+    std::array<Uint32, ROOT_TYPE_COUNT> m_TotalSrvCbvUavSlots = {};
+    std::array<Uint32, ROOT_TYPE_COUNT> m_TotalSamplerSlots   = {};
+    std::array<Uint32, ROOT_TYPE_COUNT> m_TotalRootViews      = {};
 
     Uint32 m_NumSpaces = 0;
 
-    // The number of shader stages that have resources.
-    Uint8 m_NumShaderStages = 0;
-
-    ShaderResourceCacheD3D12*   m_pResourceCache = nullptr;
-    ShaderVariableManagerD3D12* m_StaticVarsMgrs = nullptr; // [m_NumShaderStages]
+    ShaderResourceCacheD3D12*   m_pStaticResCache = nullptr;
+    ShaderVariableManagerD3D12* m_StaticVarsMgrs  = nullptr; // [m_NumShaderStages]
 
     RootParamsManager m_RootParams;
 
