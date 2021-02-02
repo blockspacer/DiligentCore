@@ -137,6 +137,14 @@ public:
     virtual void DILIGENT_CALL_TYPE CreateSBT(const ShaderBindingTableDesc& Desc,
                                               IShaderBindingTable**         ppSBT) override final;
 
+    /// Implementation of IRenderDevice::CreatePipelineResourceSignature() in Direct3D12 backend.
+    virtual void DILIGENT_CALL_TYPE CreatePipelineResourceSignature(const PipelineResourceSignatureDesc& Desc,
+                                                                    IPipelineResourceSignature**         ppSignature) override final;
+
+    void CreatePipelineResourceSignature(const PipelineResourceSignatureDesc& Desc,
+                                         IPipelineResourceSignature**         ppSignature,
+                                         bool                                 IsDeviceInternal);
+
     /// Implementation of IRenderDeviceD3D12::GetD3D12Device().
     virtual ID3D12Device* DILIGENT_CALL_TYPE GetD3D12Device() override final { return m_pd3d12Device; }
 

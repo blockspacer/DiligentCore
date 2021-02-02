@@ -160,8 +160,23 @@ bool RemapShaderResourcesSM51(const DXBCUtils::TResourceBindingMap& ResourceMap,
 } // namespace
 
 
-bool DXBCUtils::RemapDXBCResources(const TResourceBindingMap& ResourceMap,
-                                   ID3DBlob*                  pBytecode)
+bool DXBCUtils::IsDXBC(ID3DBlob* pBytecode)
+{
+    if (pBytecode == nullptr)
+        return false;
+
+    char* const Ptr  = static_cast<char*>(pBytecode->GetBufferPointer());
+    const auto  Size = pBytecode->GetBufferSize();
+
+    if (Size < sizeof(DXBCHeader))
+        return false;
+
+    auto& Header = *reinterpret_cast<DXBCHeader*>(Ptr);
+    return Header.Magic == DXBCFourCC;
+}
+
+bool DXBCUtils::RemapResourceBindings(const TResourceBindingMap& ResourceMap,
+                                      ID3DBlob*                  pBytecode)
 {
     if (pBytecode == nullptr)
     {

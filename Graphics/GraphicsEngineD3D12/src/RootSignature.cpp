@@ -28,8 +28,6 @@
 #include "pch.h"
 
 #include "RootSignature.hpp"
-#include "ShaderResourceLayoutD3D12.hpp"
-#include "ShaderD3D12Impl.hpp"
 #include "CommandContext.hpp"
 #include "RenderDeviceD3D12Impl.hpp"
 #include "TextureD3D12Impl.hpp"
@@ -40,139 +38,7 @@
 namespace Diligent
 {
 
-static constexpr auto RAY_TRACING_SHADER_TYPES =
-    SHADER_TYPE_RAY_GEN |
-    SHADER_TYPE_RAY_MISS |
-    SHADER_TYPE_RAY_CLOSEST_HIT |
-    SHADER_TYPE_RAY_ANY_HIT |
-    SHADER_TYPE_RAY_INTERSECTION |
-    SHADER_TYPE_CALLABLE;
-
-RootSignature::RootParamsManager::RootParamsManager(IMemoryAllocator& MemAllocator) :
-    m_MemAllocator{MemAllocator},
-    m_pMemory{nullptr, STDDeleter<void, IMemoryAllocator>(MemAllocator)}
-{}
-
-size_t RootSignature::RootParamsManager::GetRequiredMemorySize(Uint32 NumExtraRootTables,
-                                                               Uint32 NumExtraRootViews,
-                                                               Uint32 NumExtraDescriptorRanges) const
-{
-    return sizeof(RootParameter) * (m_NumRootTables + NumExtraRootTables + m_NumRootViews + NumExtraRootViews) + sizeof(D3D12_DESCRIPTOR_RANGE) * (m_TotalDescriptorRanges + NumExtraDescriptorRanges);
-}
-
-D3D12_DESCRIPTOR_RANGE* RootSignature::RootParamsManager::Extend(Uint32 NumExtraRootTables,
-                                                                 Uint32 NumExtraRootViews,
-                                                                 Uint32 NumExtraDescriptorRanges,
-                                                                 Uint32 RootTableToAddRanges)
-{
-    VERIFY(NumExtraRootTables > 0 || NumExtraRootViews > 0 || NumExtraDescriptorRanges > 0, "At least one root table, root view or descriptor range must be added");
-    auto MemorySize = GetRequiredMemorySize(NumExtraRootTables, NumExtraRootViews, NumExtraDescriptorRanges);
-    VERIFY_EXPR(MemorySize > 0);
-    auto* pNewMemory = ALLOCATE_RAW(m_MemAllocator, "Memory buffer for root tables, root views & descriptor ranges", MemorySize);
-    memset(pNewMemory, 0, MemorySize);
-
-    // Note: this order is more efficient than views->tables->ranges
-    auto* pNewRootTables          = reinterpret_cast<RootParameter*>(pNewMemory);
-    auto* pNewRootViews           = pNewRootTables + (m_NumRootTables + NumExtraRootTables);
-    auto* pCurrDescriptorRangePtr = reinterpret_cast<D3D12_DESCRIPTOR_RANGE*>(pNewRootViews + m_NumRootViews + NumExtraRootViews);
-
-    // Copy existing root tables to new memory
-    for (Uint32 rt = 0; rt < m_NumRootTables; ++rt)
-    {
-        const auto& SrcTbl      = GetRootTable(rt);
-        auto&       D3D12SrcTbl = static_cast<const D3D12_ROOT_PARAMETER&>(SrcTbl).DescriptorTable;
-        auto        NumRanges   = D3D12SrcTbl.NumDescriptorRanges;
-        if (rt == RootTableToAddRanges)
-        {
-            VERIFY(NumExtraRootTables == 0 || NumExtraRootTables == 1, "Up to one descriptor table can be extended at a time");
-            NumRanges += NumExtraDescriptorRanges;
-        }
-        new (pNewRootTables + rt) RootParameter(SrcTbl, NumRanges, pCurrDescriptorRangePtr);
-        pCurrDescriptorRangePtr += NumRanges;
-    }
-
-    // Copy existing root views to new memory
-    for (Uint32 rv = 0; rv < m_NumRootViews; ++rv)
-    {
-        const auto& SrcView = GetRootView(rv);
-        new (pNewRootViews + rv) RootParameter(SrcView);
-    }
-
-    m_pMemory.reset(pNewMemory);
-    m_NumRootTables += NumExtraRootTables;
-    m_NumRootViews += NumExtraRootViews;
-    m_TotalDescriptorRanges += NumExtraDescriptorRanges;
-    m_pRootTables = m_NumRootTables != 0 ? pNewRootTables : nullptr;
-    m_pRootViews  = m_NumRootViews != 0 ? pNewRootViews : nullptr;
-
-    return pCurrDescriptorRangePtr;
-}
-
-void RootSignature::RootParamsManager::AddRootView(D3D12_ROOT_PARAMETER_TYPE     ParameterType,
-                                                   Uint32                        RootIndex,
-                                                   UINT                          Register,
-                                                   D3D12_SHADER_VISIBILITY       Visibility,
-                                                   SHADER_RESOURCE_VARIABLE_TYPE VarType)
-{
-    auto* pRangePtr = Extend(0, 1, 0);
-    VERIFY_EXPR((char*)pRangePtr == (char*)m_pMemory.get() + GetRequiredMemorySize(0, 0, 0));
-    new (m_pRootViews + m_NumRootViews - 1) RootParameter(ParameterType, RootIndex, Register, 0u, Visibility, VarType);
-}
-
-void RootSignature::RootParamsManager::AddRootTable(Uint32                        RootIndex,
-                                                    D3D12_SHADER_VISIBILITY       Visibility,
-                                                    SHADER_RESOURCE_VARIABLE_TYPE VarType,
-                                                    Uint32                        NumRangesInNewTable)
-{
-    auto* pRangePtr = Extend(1, 0, NumRangesInNewTable);
-    VERIFY_EXPR((char*)(pRangePtr + NumRangesInNewTable) == (char*)m_pMemory.get() + GetRequiredMemorySize(0, 0, 0));
-    new (m_pRootTables + m_NumRootTables - 1) RootParameter(D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, RootIndex, NumRangesInNewTable, pRangePtr, Visibility, VarType);
-}
-
-void RootSignature::RootParamsManager::AddDescriptorRanges(Uint32 RootTableInd, Uint32 NumExtraRanges)
-{
-    auto* pRangePtr = Extend(0, 0, NumExtraRanges, RootTableInd);
-    VERIFY_EXPR((char*)pRangePtr == (char*)m_pMemory.get() + GetRequiredMemorySize(0, 0, 0));
-}
-
-bool RootSignature::RootParamsManager::operator==(const RootParamsManager& RootParams) const
-{
-    if (m_NumRootTables != RootParams.m_NumRootTables ||
-        m_NumRootViews != RootParams.m_NumRootViews)
-        return false;
-
-    for (Uint32 rv = 0; rv < m_NumRootViews; ++rv)
-    {
-        const auto& RV0 = GetRootView(rv);
-        const auto& RV1 = RootParams.GetRootView(rv);
-        if (RV0 != RV1)
-            return false;
-    }
-
-    for (Uint32 rv = 0; rv < m_NumRootTables; ++rv)
-    {
-        const auto& RT0 = GetRootTable(rv);
-        const auto& RT1 = RootParams.GetRootTable(rv);
-        if (RT0 != RT1)
-            return false;
-    }
-
-    return true;
-}
-
-size_t RootSignature::RootParamsManager::GetHash() const
-{
-    size_t hash = ComputeHash(m_NumRootTables, m_NumRootViews);
-    for (Uint32 rv = 0; rv < m_NumRootViews; ++rv)
-        HashCombine(hash, GetRootView(rv).GetHash());
-
-    for (Uint32 rv = 0; rv < m_NumRootTables; ++rv)
-        HashCombine(hash, GetRootTable(rv).GetHash());
-
-    return hash;
-}
-
-
+/*
 RootSignatureBuilder::RootSignatureBuilder(RootSignature&                    RootSig,
                                            const PipelineResourceLayoutDesc& PipelineResLayout) :
     m_RootSig{RootSig},
@@ -537,14 +403,10 @@ size_t RootSignatureBuilder::GetResourceCacheRequiredMemSize() const
     auto CacheTableSizes = m_RootSig.GetCacheTableSizes();
     return ShaderResourceCacheD3D12::GetRequiredMemorySize(static_cast<Uint32>(CacheTableSizes.size()), CacheTableSizes.data());
 }
+*/
 
-
-RootSignature::RootSignature() :
-    m_RootParams{GetRawAllocator()},
-    m_MemAllocator{GetRawAllocator()}
+RootSignature::RootSignature()
 {
-    m_SrvCbvUavRootTablesMap.fill(InvalidRootTableIndex);
-    m_SamplerRootTablesMap.fill(InvalidRootTableIndex);
 }
 
 // clang-format off
@@ -576,6 +438,172 @@ D3D12_DESCRIPTOR_HEAP_TYPE HeapTypeFromRangeType(D3D12_DESCRIPTOR_RANGE_TYPE Ran
     return HeapType;
 }
 
+void RootSignature::Create(RenderDeviceD3D12Impl* pDeviceD3D12Impl, PIPELINE_TYPE PipelineType, IPipelineResourceSignature** ppSignatures, Uint32 SignatureCount)
+{
+    VERIFY(m_SignatureCount == 0 && m_pd3d12RootSignature == nullptr,
+           "This root signature is already initialized");
+
+    for (Uint32 i = 0; i < SignatureCount; ++i)
+    {
+        auto* pSignature = ValidatedCast<PipelineResourceSignatureD3D12Impl>(ppSignatures[i]);
+        VERIFY(pSignature != nullptr, "Pipeline resource signature at index ", i, " is null. This error should've been caught by ValidatePipelineResourceSignatures.");
+
+        const Uint8 Index = pSignature->GetDesc().BindingIndex;
+
+#ifdef DILIGENT_DEBUG
+        VERIFY(Index < m_Signatures.size(),
+               "Pipeline resource signature specifies binding index ", Uint32{Index}, " that exceeds the limit (", m_Signatures.size() - 1,
+               "). This error should've been caught by ValidatePipelineResourceSignatureDesc.");
+
+        VERIFY(m_Signatures[Index] == nullptr,
+               "Pipeline resource signature '", pSignature->GetDesc().Name, "' at index ", Uint32{Index},
+               " conflicts with another resource signature '", m_Signatures[Index]->GetDesc().Name,
+               "' that uses the same index. This error should've been caught by ValidatePipelineResourceSignatures.");
+
+        for (Uint32 s = 0, StageCount = pSignature->GetNumActiveShaderStages(); s < StageCount; ++s)
+        {
+            const auto ShaderType = pSignature->GetActiveShaderStageType(s);
+            VERIFY(IsConsistentShaderType(ShaderType, PipelineType),
+                   "Pipeline resource signature '", pSignature->GetDesc().Name, "' at index ", Uint32{Index},
+                   " has shader stage '", GetShaderTypeLiteralName(ShaderType), "' that is not compatible with pipeline type '",
+                   GetPipelineTypeString(PipelineType), "'.");
+        }
+#endif
+
+        m_SignatureCount    = std::max<Uint8>(m_SignatureCount, Index + 1);
+        m_Signatures[Index] = pSignature;
+    }
+
+    D3D12_ROOT_SIGNATURE_DESC rootSignatureDesc = {};
+    rootSignatureDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+    std::array<Uint32, MAX_RESOURCE_SIGNATURES> FirstRootIndex = {};
+    Uint32                                      TotalParams    = 0;
+
+    std::array<Uint32, SHADER_RESOURCE_VARIABLE_TYPE_NUM_TYPES> TotalSrvCbvUavSlots = {};
+    std::array<Uint32, SHADER_RESOURCE_VARIABLE_TYPE_NUM_TYPES> TotalSamplerSlots   = {};
+    std::array<Uint32, SHADER_RESOURCE_VARIABLE_TYPE_NUM_TYPES> TotalRootViews      = {};
+
+    for (Uint32 s = 0; s < m_SignatureCount; ++s)
+    {
+        auto& pSignature = m_Signatures[s];
+        if (pSignature != nullptr)
+        {
+            auto& RootParams = pSignature->m_RootParams;
+
+            for (Uint32 rt = 0; rt < RootParams.GetNumRootTables(); ++rt)
+            {
+                const auto& RootTbl        = RootParams.GetRootTable(rt);
+                const auto& d3d12RootParam = static_cast<const D3D12_ROOT_PARAMETER&>(RootTbl);
+                VERIFY_EXPR(d3d12RootParam.ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE);
+
+                auto TableSize = RootTbl.GetDescriptorTableSize();
+                VERIFY(d3d12RootParam.DescriptorTable.NumDescriptorRanges > 0 && TableSize > 0, "Unexpected empty descriptor table");
+                auto IsSamplerTable = d3d12RootParam.DescriptorTable.pDescriptorRanges[0].RangeType == D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
+                auto VarType        = RootTbl.GetShaderVariableType();
+                (IsSamplerTable ? TotalSamplerSlots : TotalSrvCbvUavSlots)[VarType] += TableSize;
+            }
+
+            for (Uint32 rv = 0; rv < RootParams.GetNumRootViews(); ++rv)
+            {
+                const auto& RootView = RootParams.GetRootView(rv);
+                ++TotalRootViews[RootView.GetShaderVariableType()];
+            }
+
+            FirstRootIndex[s] = TotalParams;
+            TotalParams += RootParams.GetNumRootTables() + RootParams.GetNumRootViews();
+        }
+    }
+
+    std::vector<D3D12_ROOT_PARAMETER, STDAllocatorRawMem<D3D12_ROOT_PARAMETER>> D3D12Parameters(TotalParams, D3D12_ROOT_PARAMETER{}, STD_ALLOCATOR_RAW_MEM(D3D12_ROOT_PARAMETER, GetRawAllocator(), "Allocator for vector<D3D12_ROOT_PARAMETER>"));
+
+    for (Uint32 s = 0; s < m_SignatureCount; ++s)
+    {
+        auto& pSignature = m_Signatures[s];
+        if (pSignature != nullptr)
+        {
+            auto& RootParams = pSignature->m_RootParams;
+            for (Uint32 rt = 0; rt < RootParams.GetNumRootTables(); ++rt)
+            {
+                const auto&                 RootTable = RootParams.GetRootTable(rt);
+                const D3D12_ROOT_PARAMETER& SrcParam  = RootTable;
+                const Uint32                RootIndex = FirstRootIndex[s] + RootTable.GetLocalRootIndex();
+                VERIFY(SrcParam.ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE && SrcParam.DescriptorTable.NumDescriptorRanges > 0, "Non-empty descriptor table is expected");
+                D3D12Parameters[RootIndex] = SrcParam;
+            }
+            for (Uint32 rv = 0; rv < RootParams.GetNumRootViews(); ++rv)
+            {
+                const auto&                 RootView  = RootParams.GetRootView(rv);
+                const D3D12_ROOT_PARAMETER& SrcParam  = RootView;
+                const Uint32                RootIndex = FirstRootIndex[s] + RootView.GetLocalRootIndex();
+                VERIFY(SrcParam.ParameterType == D3D12_ROOT_PARAMETER_TYPE_CBV, "Root CBV is expected");
+                D3D12Parameters[RootIndex] = SrcParam;
+            }
+        }
+    }
+
+    rootSignatureDesc.NumParameters = static_cast<UINT>(D3D12Parameters.size());
+    rootSignatureDesc.pParameters   = D3D12Parameters.size() ? D3D12Parameters.data() : nullptr;
+    /*
+    UINT TotalD3D12StaticSamplers = 0;
+    for (const auto& ImtblSam : m_ImmutableSamplers)
+    {
+        TotalD3D12StaticSamplers += ImtblSam.ArraySize;
+    }
+    rootSignatureDesc.NumStaticSamplers = TotalD3D12StaticSamplers;
+    rootSignatureDesc.pStaticSamplers   = nullptr;
+    std::vector<D3D12_STATIC_SAMPLER_DESC, STDAllocatorRawMem<D3D12_STATIC_SAMPLER_DESC>> D3D12StaticSamplers(STD_ALLOCATOR_RAW_MEM(D3D12_STATIC_SAMPLER_DESC, GetRawAllocator(), "Allocator for vector<D3D12_STATIC_SAMPLER_DESC>"));
+    D3D12StaticSamplers.reserve(TotalD3D12StaticSamplers);
+    if (!m_ImmutableSamplers.empty())
+    {
+        for (size_t s = 0; s < m_ImmutableSamplers.size(); ++s)
+        {
+            const auto& ImtblSmplr = m_ImmutableSamplers[s];
+            const auto& SamDesc    = ImtblSmplr.Desc;
+            for (UINT ArrInd = 0; ArrInd < ImtblSmplr.ArraySize; ++ArrInd)
+            {
+                D3D12StaticSamplers.emplace_back(
+                    D3D12_STATIC_SAMPLER_DESC //
+                    {
+                        FilterTypeToD3D12Filter(SamDesc.MinFilter, SamDesc.MagFilter, SamDesc.MipFilter),
+                        TexAddressModeToD3D12AddressMode(SamDesc.AddressU),
+                        TexAddressModeToD3D12AddressMode(SamDesc.AddressV),
+                        TexAddressModeToD3D12AddressMode(SamDesc.AddressW),
+                        SamDesc.MipLODBias,
+                        SamDesc.MaxAnisotropy,
+                        ComparisonFuncToD3D12ComparisonFunc(SamDesc.ComparisonFunc),
+                        BorderColorToD3D12StaticBorderColor(SamDesc.BorderColor),
+                        SamDesc.MinLOD,
+                        SamDesc.MaxLOD,
+                        ImtblSmplr.ShaderRegister + ArrInd,
+                        ImtblSmplr.RegisterSpace,
+                        ShaderTypeToD3D12ShaderVisibility(ImtblSmplr.ShaderType) //
+                    }                                                            //
+                );
+            }
+        }
+        rootSignatureDesc.pStaticSamplers = D3D12StaticSamplers.data();
+
+        VERIFY_EXPR(D3D12StaticSamplers.size() == TotalD3D12StaticSamplers);
+    }
+    */
+
+    CComPtr<ID3DBlob> signature;
+    CComPtr<ID3DBlob> error;
+
+    HRESULT hr = D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signature, &error);
+    if (error)
+    {
+        LOG_ERROR_MESSAGE("Error: ", (const char*)error->GetBufferPointer());
+    }
+    CHECK_D3D_RESULT_THROW(hr, "Failed to serialize root signature");
+
+    auto* pd3d12Device = pDeviceD3D12Impl->GetD3D12Device();
+
+    hr = pd3d12Device->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), __uuidof(m_pd3d12RootSignature), reinterpret_cast<void**>(static_cast<ID3D12RootSignature**>(&m_pd3d12RootSignature)));
+    CHECK_D3D_RESULT_THROW(hr, "Failed to create root signature");
+}
+/*
 std::vector<Uint32, STDAllocatorRawMem<Uint32>> RootSignature::GetCacheTableSizes() const
 {
     // Get root table size for every root index
@@ -1175,7 +1203,7 @@ void RootSignature::TransitionResources(ShaderResourceCacheD3D12& ResourceCache,
         } //
     );
 }
-
+*/
 
 LocalRootSignature::LocalRootSignature(const char* pCBName, Uint32 ShaderRecordSize) :
     m_pName{pCBName},
@@ -1184,18 +1212,12 @@ LocalRootSignature::LocalRootSignature(const char* pCBName, Uint32 ShaderRecordS
     VERIFY_EXPR((m_pName != nullptr) == (m_ShaderRecordSize > 0));
 }
 
-bool LocalRootSignature::SetOrMerge(const D3DShaderResourceAttribs& CB)
+bool LocalRootSignature::IsShaderRecord(const D3DShaderResourceAttribs& CB)
 {
     if (m_ShaderRecordSize > 0 &&
         CB.GetInputType() == D3D_SIT_CBUFFER &&
         strcmp(m_pName, CB.Name) == 0)
     {
-        if (m_BindPoint == InvalidBindPoint)
-            m_BindPoint = CB.BindPoint;
-
-        VERIFY_EXPR(CB.BindCount == 1);
-        VERIFY_EXPR(m_BindPoint == CB.BindPoint);
-
         return true;
     }
     return false;

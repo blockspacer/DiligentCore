@@ -285,17 +285,11 @@ void DeviceContextD3D12Impl::TransitionShaderResources(IPipelineState* pPipeline
         return;
     }
 
-    auto& Ctx = GetCmdContext();
+    // auto& Ctx = GetCmdContext();
 
-    auto* pPipelineStateD3D12 = ValidatedCast<PipelineStateD3D12Impl>(pPipelineState);
+    //auto* pPipelineStateD3D12 = ValidatedCast<PipelineStateD3D12Impl>(pPipelineState);
 
-    PipelineStateD3D12Impl::CommitAndTransitionResourcesAttribs Attribs;
-    Attribs.CtxId                  = m_ContextId;
-    Attribs.pShaderResourceBinding = pShaderResourceBinding;
-    Attribs.CommitResources        = false;
-    Attribs.TransitionResources    = true;
-    Attribs.ValidateStates         = false;
-    pPipelineStateD3D12->CommitAndTransitionShaderResources(this, Ctx, Attribs);
+    // AZ TODO
 }
 
 void DeviceContextD3D12Impl::CommitShaderResources(IShaderResourceBinding* pShaderResourceBinding, RESOURCE_STATE_TRANSITION_MODE StateTransitionMode)
@@ -303,16 +297,9 @@ void DeviceContextD3D12Impl::CommitShaderResources(IShaderResourceBinding* pShad
     if (!DeviceContextBase::CommitShaderResources(pShaderResourceBinding, StateTransitionMode, 0 /*Dummy*/))
         return;
 
-    auto& Ctx = GetCmdContext();
+    //auto& Ctx = GetCmdContext();
 
-    PipelineStateD3D12Impl::CommitAndTransitionResourcesAttribs Attribs;
-    Attribs.CtxId                   = m_ContextId;
-    Attribs.pShaderResourceBinding  = pShaderResourceBinding;
-    Attribs.CommitResources         = true;
-    Attribs.TransitionResources     = StateTransitionMode == RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-    Attribs.ValidateStates          = StateTransitionMode == RESOURCE_STATE_TRANSITION_MODE_VERIFY;
-    m_State.pCommittedResourceCache = m_pPipelineState->CommitAndTransitionShaderResources(this, Ctx, Attribs);
-    m_State.bRootViewsCommitted     = false;
+    // AZ TODO
 }
 
 void DeviceContextD3D12Impl::SetStencilRef(Uint32 StencilRef)
@@ -455,7 +442,7 @@ void DeviceContextD3D12Impl::PrepareForDraw(GraphicsContext& GraphCtx, DRAW_FLAG
 
     GraphCtx.SetGraphicsRootSignature(m_pPipelineState->GetD3D12RootSignature());
 
-    if (m_State.pCommittedResourceCache != nullptr)
+    /*if (m_State.pCommittedResourceCache != nullptr)
     {
         if (m_State.pCommittedResourceCache->GetNumDynamicCBsBound() > 0)
         {
@@ -484,7 +471,7 @@ void DeviceContextD3D12Impl::PrepareForDraw(GraphicsContext& GraphCtx, DRAW_FLAG
         if (m_pPipelineState->ContainsShaderResources())
             LOG_ERROR_MESSAGE("Pipeline state '", m_pPipelineState->GetDesc().Name, "' contains shader resources, but IDeviceContext::CommitShaderResources() was not called with non-null SRB");
     }
-#endif
+#endif*/
 }
 
 void DeviceContextD3D12Impl::PrepareForIndexedDraw(GraphicsContext& GraphCtx, DRAW_FLAGS Flags, VALUE_TYPE IndexType)
@@ -610,7 +597,7 @@ void DeviceContextD3D12Impl::DrawMeshIndirect(const DrawMeshIndirectAttribs& Att
 void DeviceContextD3D12Impl::PrepareForDispatchCompute(ComputeContext& ComputeCtx)
 {
     ComputeCtx.SetComputeRootSignature(m_pPipelineState->GetD3D12RootSignature());
-    if (m_State.pCommittedResourceCache != nullptr)
+    /*if (m_State.pCommittedResourceCache != nullptr)
     {
         if (m_State.pCommittedResourceCache->GetNumDynamicCBsBound() > 0)
         {
@@ -635,13 +622,13 @@ void DeviceContextD3D12Impl::PrepareForDispatchCompute(ComputeContext& ComputeCt
         if (m_pPipelineState->ContainsShaderResources())
             LOG_ERROR_MESSAGE("Pipeline state '", m_pPipelineState->GetDesc().Name, "' contains shader resources, but IDeviceContext::CommitShaderResources() was not called with non-null SRB");
     }
-#endif
+#endif*/
 }
 
 void DeviceContextD3D12Impl::PrepareForDispatchRays(GraphicsContext& GraphCtx)
 {
     GraphCtx.SetComputeRootSignature(m_pPipelineState->GetD3D12RootSignature());
-    if (m_State.pCommittedResourceCache != nullptr)
+    /*if (m_State.pCommittedResourceCache != nullptr)
     {
         if (m_State.pCommittedResourceCache->GetNumDynamicCBsBound() > 0)
         {
@@ -666,7 +653,7 @@ void DeviceContextD3D12Impl::PrepareForDispatchRays(GraphicsContext& GraphCtx)
         if (m_pPipelineState->ContainsShaderResources())
             LOG_ERROR_MESSAGE("Pipeline state '", m_pPipelineState->GetDesc().Name, "' contains shader resources, but IDeviceContext::CommitShaderResources() was not called with non-null SRB");
     }
-#endif
+#endif*/
 }
 
 void DeviceContextD3D12Impl::DispatchCompute(const DispatchComputeAttribs& Attribs)

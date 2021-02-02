@@ -199,12 +199,12 @@ TEST(DXCompilerTest, RemapBindings)
     ASSERT_TRUE(pDXIL) << (pOutput ? std::string{reinterpret_cast<const char*>(pOutput->GetBufferPointer()), pOutput->GetBufferSize()} : "");
 
     IDXCompiler::TResourceBindingMap BindigMap;
-    BindigMap["g_TLAS"]        = 15;
-    BindigMap["g_ColorBuffer"] = 7;
-    BindigMap["g_Tex"]         = 101;
-    BindigMap["g_TexSampler"]  = 0;
-    BindigMap["cbConstants"]   = 9;
-    BindigMap["g_AnotherRes"]  = 567;
+    BindigMap["g_TLAS"]        = {15, 0};
+    BindigMap["g_ColorBuffer"] = {7, 1};
+    BindigMap["g_Tex"]         = {101, 0};
+    BindigMap["g_TexSampler"]  = {0, 2};
+    BindigMap["cbConstants"]   = {9, 0};
+    BindigMap["g_AnotherRes"]  = {567, 5};
     CComPtr<IDxcBlob> pRemappedDXIL;
     pDXC->RemapResourceBindings(BindigMap, pDXIL, &pRemappedDXIL);
     ASSERT_TRUE(pRemappedDXIL);
@@ -221,7 +221,7 @@ TEST(DXCompilerTest, RemapBindings)
 
         EXPECT_HRESULT_SUCCEEDED(pReflection->GetResourceBindingDescByName("g_ColorBuffer", &BindDesc));
         EXPECT_EQ(BindDesc.BindPoint, 7U);
-        EXPECT_EQ(BindDesc.Space, 0U);
+        EXPECT_EQ(BindDesc.Space, 1U);
 
         EXPECT_HRESULT_SUCCEEDED(pReflection->GetResourceBindingDescByName("g_Tex", &BindDesc));
         EXPECT_EQ(BindDesc.BindPoint, 101U);
@@ -229,18 +229,18 @@ TEST(DXCompilerTest, RemapBindings)
 
         EXPECT_HRESULT_SUCCEEDED(pReflection->GetResourceBindingDescByName("g_TexSampler", &BindDesc));
         EXPECT_EQ(BindDesc.BindPoint, 0U);
-        EXPECT_EQ(BindDesc.Space, 0U);
+        EXPECT_EQ(BindDesc.Space, 2U);
 
         EXPECT_HRESULT_SUCCEEDED(pReflection->GetResourceBindingDescByName("cbConstants", &BindDesc));
         EXPECT_EQ(BindDesc.BindPoint, 9U);
         EXPECT_EQ(BindDesc.Space, 0U);
     }
 
-    BindigMap["g_TLAS"]        = 0;
-    BindigMap["g_ColorBuffer"] = 1;
-    BindigMap["g_Tex"]         = 2;
-    BindigMap["g_TexSampler"]  = 3;
-    BindigMap["cbConstants"]   = 4;
+    BindigMap["g_TLAS"]        = {0, 0};
+    BindigMap["g_ColorBuffer"] = {1, 0};
+    BindigMap["g_Tex"]         = {2, 0};
+    BindigMap["g_TexSampler"]  = {0, 1};
+    BindigMap["cbConstants"]   = {1, 1};
     CComPtr<IDxcBlob> pRemappedDXIL2;
     pDXC->RemapResourceBindings(BindigMap, pRemappedDXIL, &pRemappedDXIL2);
     ASSERT_TRUE(pRemappedDXIL2);
@@ -264,12 +264,12 @@ TEST(DXCompilerTest, RemapBindings)
         EXPECT_EQ(BindDesc.Space, 0U);
 
         EXPECT_HRESULT_SUCCEEDED(pReflection->GetResourceBindingDescByName("g_TexSampler", &BindDesc));
-        EXPECT_EQ(BindDesc.BindPoint, 3U);
-        EXPECT_EQ(BindDesc.Space, 0U);
+        EXPECT_EQ(BindDesc.BindPoint, 0U);
+        EXPECT_EQ(BindDesc.Space, 1U);
 
         EXPECT_HRESULT_SUCCEEDED(pReflection->GetResourceBindingDescByName("cbConstants", &BindDesc));
-        EXPECT_EQ(BindDesc.BindPoint, 4U);
-        EXPECT_EQ(BindDesc.Space, 0U);
+        EXPECT_EQ(BindDesc.BindPoint, 1U);
+        EXPECT_EQ(BindDesc.Space, 1U);
     }
 }
 

@@ -54,7 +54,7 @@ static void TestDXBCRemapping(const char* Source, const char* Entry, const char*
     }
     ASSERT_TRUE(SUCCEEDED(hr));
 
-    ASSERT_TRUE(DXBCUtils::RemapDXBCResources(ResMap, Blob));
+    ASSERT_TRUE(DXBCUtils::RemapResourceBindings(ResMap, Blob));
 
     CComPtr<ID3D12ShaderReflection> ShaderReflection;
 

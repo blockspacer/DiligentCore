@@ -31,7 +31,6 @@ set(INCLUDE
     include/ShaderD3D12Impl.hpp
     include/ShaderResourceBindingD3D12Impl.hpp
     include/ShaderResourceCacheD3D12.hpp
-    include/ShaderResourceLayoutD3D12.hpp
     include/ShaderResourcesD3D12.hpp
     include/ShaderVariableD3D12.hpp
     include/SwapChainD3D12Impl.hpp
@@ -40,6 +39,7 @@ set(INCLUDE
     include/BottomLevelASD3D12Impl.hpp
     include/TopLevelASD3D12Impl.hpp
     include/ShaderBindingTableD3D12Impl.hpp
+    include/PipelineResourceSignatureD3D12Impl.hpp
 )
 
 set(INTERFACE 
@@ -89,7 +89,6 @@ set(SRC
     src/ShaderD3D12Impl.cpp
     src/ShaderResourceBindingD3D12Impl.cpp
     src/ShaderResourceCacheD3D12.cpp
-    src/ShaderResourceLayoutD3D12.cpp
     src/ShaderResourcesD3D12.cpp
     src/ShaderVariableD3D12.cpp
     src/SwapChainD3D12Impl.cpp
@@ -98,6 +97,7 @@ set(SRC
     src/BottomLevelASD3D12Impl.cpp
     src/TopLevelASD3D12Impl.cpp
     src/ShaderBindingTableD3D12Impl.cpp
+    src/PipelineResourceSignatureD3D12Impl.cpp
 )
 
 if(PLATFORM_WIN32)
@@ -228,3 +228,7 @@ if(DILIGENT_INSTALL_CORE)
     install_core_lib(Diligent-GraphicsEngineD3D12-shared)
     install_core_lib(Diligent-GraphicsEngineD3D12-static)
 endif()
+
+# create empty cpp file that changed after each build to trigger build of dependent target which must copy new shared libraries
+set(Diligent-GraphicsEngineD3D12-trigger "${CMAKE_CURRENT_SOURCE_DIR}/src/Diligent-GraphicsEngineD3D12.trigger.cpp" CACHE INTERNAL "" FORCE)
+add_custom_command(TARGET Diligent-GraphicsEngineD3D12-shared POST_BUILD COMMAND ${CMAKE_COMMAND} -E touch "${Diligent-GraphicsEngineD3D12-trigger}")

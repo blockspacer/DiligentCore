@@ -771,6 +771,12 @@ void PipelineStateVkImpl::InitPipelineLayout(const PipelineStateCreateInfo& Crea
                         auto IterAndAssigned = UniqueNames.emplace(HashMapStringKey{Res.Name}, UniqueResource{&Res, static_cast<Uint32>(Resources.size())});
                         if (IterAndAssigned.second)
                         {
+                            if (Res.ArraySize == 0)
+                            {
+                                LOG_ERROR_AND_THROW("Is shader '", pShader->GetDesc().Name, "' resource '", Res.Name, "' uses runtime sized array,"
+                                                    " you must explicitlly set resource signature to specify array size");
+                            }
+
                             SHADER_RESOURCE_TYPE    Type;
                             PIPELINE_RESOURCE_FLAGS Flags;
                             GetShaderResourceTypeAndFlags(Res.Type, Type, Flags);

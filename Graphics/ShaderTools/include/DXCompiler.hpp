@@ -29,13 +29,12 @@
 
 #include <array>
 #include <vector>
-#include <unordered_map>
 #include <memory>
 
 #include "Constants.h"
 #include "Shader.h"
 #include "DataBlob.h"
-#include "HashUtils.hpp"
+#include "ResourceBindingMap.hpp"
 
 // defined in dxcapi.h
 struct DxcDefine;
@@ -85,10 +84,10 @@ public:
                          IDxcBlob**              ppByteCodeBlob,
                          std::vector<uint32_t>*  pByteCode,
                          IDataBlob**             ppCompilerOutput) noexcept(false) = 0;
+    
 
-    /// A mapping from the resource name to the binding (shader register).
-    using TResourceBindingMap = std::unordered_map<HashMapStringKey, Uint32, HashMapStringKey::Hasher>;
-
+    using BindInfo            = ResourceBinding::BindInfo;
+    using TResourceBindingMap = ResourceBinding::TMap;
 
     /// Remaps resource bindings (shader registers) in the source byte code using the
     /// resource binding map.

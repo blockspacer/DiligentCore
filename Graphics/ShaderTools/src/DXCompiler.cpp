@@ -886,7 +886,8 @@ bool DXCompilerImpl::PatchDXIL(const TResourceBindingMap& ResourceMap, String& D
         // !158 = !{i32 0, %"class.RWTexture2D<vector<float, 4> >"* @"\01?g_ColorBuffer@@3V?$RWTexture2D@V?$vector@M$03@@@@A", !"g_ColorBuffer", i32 -1, i32 -1, i32 1, i32 2, i1 false, i1 false, i1 false, !159}
 
         const auto* Name      = ResPair.first.GetStr();
-        const auto& BindPoint = ResPair.second;
+        const auto  Space     = ResPair.second.Space;
+        const auto  BindPoint = ResPair.second.BindPoint;
         const auto  DxilName  = String{"!\""} + Name + "\"";
 
         size_t pos = DXIL.find(DxilName);
@@ -956,7 +957,7 @@ bool DXCompilerImpl::PatchDXIL(const TResourceBindingMap& ResourceMap, String& D
 
         // !"g_ColorBuffer", i32 -1, i32 -1,
         //                 ^
-        if (!ReplaceRecord("0", "space"))
+        if (!ReplaceRecord(std::to_string(Space), "space"))
         {
             RemappingOK = false;
             continue;

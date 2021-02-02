@@ -43,6 +43,7 @@
 #include "BottomLevelASD3D12Impl.hpp"
 #include "TopLevelASD3D12Impl.hpp"
 #include "ShaderBindingTableD3D12Impl.hpp"
+#include "PipelineResourceSignatureD3D12Impl.hpp"
 #include "EngineMemory.h"
 
 namespace Diligent
@@ -138,7 +139,8 @@ RenderDeviceD3D12Impl::RenderDeviceD3D12Impl(IReferenceCounters*          pRefCo
             sizeof(FramebufferD3D12Impl),
             sizeof(BottomLevelASD3D12Impl),
             sizeof(TopLevelASD3D12Impl),
-            sizeof(ShaderBindingTableD3D12Impl)
+            sizeof(ShaderBindingTableD3D12Impl),
+            sizeof(PipelineResourceSignatureD3D12Impl)
         }
     },
     m_pd3d12Device  {pd3d12Device},
@@ -163,7 +165,7 @@ RenderDeviceD3D12Impl::RenderDeviceD3D12Impl(IReferenceCounters*          pRefCo
     m_pDxCompiler         {CreateDXCompiler(DXCompilerTarget::Direct3D12, EngineCI.pDxCompilerPath)}
 // clang-format on
 {
-    static_assert(sizeof(DeviceObjectSizes) == sizeof(size_t) * 15, "Please add new objects to DeviceObjectSizes constructor");
+    static_assert(sizeof(DeviceObjectSizes) == sizeof(size_t) * 16, "Please add new objects to DeviceObjectSizes constructor");
 
     // set device properties
     {
@@ -788,6 +790,25 @@ void RenderDeviceD3D12Impl::CreateSBT(const ShaderBindingTableDesc& Desc,
                            ShaderBindingTableD3D12Impl* pSBTD3D12(NEW_RC_OBJ(m_SBTAllocator, "ShaderBindingTableD3D12Impl instance", ShaderBindingTableD3D12Impl)(this, Desc));
                            pSBTD3D12->QueryInterface(IID_ShaderBindingTable, reinterpret_cast<IObject**>(ppSBT));
                            OnCreateDeviceObject(pSBTD3D12);
+                       });
+}
+
+void RenderDeviceD3D12Impl::CreatePipelineResourceSignature(const PipelineResourceSignatureDesc& Desc,
+                                                            IPipelineResourceSignature**         ppSignature)
+{
+    CreatePipelineResourceSignature(Desc, ppSignature, false);
+}
+
+void RenderDeviceD3D12Impl::CreatePipelineResourceSignature(const PipelineResourceSignatureDesc& Desc,
+                                                            IPipelineResourceSignature**         ppSignature,
+                                                            bool                                 IsDeviceInternal)
+{
+    CreateDeviceObject("PipelineResourceSignature", Desc, ppSignature,
+                       [&]() //
+                       {
+                           PipelineResourceSignatureD3D12Impl* pPRSD3D12(NEW_RC_OBJ(m_PipeResSignAllocator, "PipelineResourceSignatureD3D12Impl instance", PipelineResourceSignatureD3D12Impl)(this, Desc, IsDeviceInternal));
+                           pPRSD3D12->QueryInterface(IID_PipelineResourceSignature, reinterpret_cast<IObject**>(ppSignature));
+                           OnCreateDeviceObject(pPRSD3D12);
                        });
 }
 

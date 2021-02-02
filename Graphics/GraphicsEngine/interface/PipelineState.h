@@ -462,7 +462,7 @@ struct RayTracingPipelineStateCreateInfo DILIGENT_DERIVE(PipelineStateCreateInfo
     
     /// Direct3D12 only: the name of the constant buffer that will be used by the local root signature.
     /// Ignored if RayTracingPipelineDesc::ShaderRecordSize is zero.
-    /// In Vulkan backend in HLSL add [[vk::shader_record_nv]] attribute to the constant buffer, in GLSL add shaderRecord layout to buffer.
+    /// In Vulkan backend in HLSL add [[vk::shader_record_ext]] attribute to the constant buffer, in GLSL add shaderRecord layout to buffer.
     const char*                               pShaderRecordName        DEFAULT_INITIALIZER(nullptr);
     
     /// Direct3D12 only: the maximum hit shader attribute size in bytes.
