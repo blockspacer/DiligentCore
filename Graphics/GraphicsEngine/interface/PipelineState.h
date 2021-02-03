@@ -579,7 +579,6 @@ DILIGENT_BEGIN_INTERFACE(IPipelineState, IDeviceObject)
 
 
     /// Checks if this pipeline state object is compatible with another PSO
-    // Deprecated: use IsCompatibleWith() for pipeline resource signature.
 
     /// If two pipeline state objects are compatible, they can use shader resource binding
     /// objects interchangebly, i.e. SRBs created by one PSO can be committed
@@ -593,6 +592,10 @@ DILIGENT_BEGIN_INTERFACE(IPipelineState, IDeviceObject)
     ///             to commit resources for the second pipeline, a runtime error will occur.\n
     ///             The function only checks compatibility of shader resource layouts. It does not take
     ///             into account vertex shader input layout, number of outputs, etc.
+    /// 
+    /// \remarks    On Vulkan backend PSO may be partially compatible, on other backends this behavior is emulated.
+    ///             For Vulkan changing PSO between totally or partially compatible may increase performance,
+    ///             for DirectX 12 only changing PSO between compatible may increase performance.
     VIRTUAL bool METHOD(IsCompatibleWith)(THIS_
                                           const struct IPipelineState* pPSO) CONST PURE;
 

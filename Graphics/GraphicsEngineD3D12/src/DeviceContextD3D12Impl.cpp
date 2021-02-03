@@ -72,6 +72,8 @@ DeviceContextD3D12Impl::DeviceContextD3D12Impl(IReferenceCounters*          pRef
         bIsDeferred ? std::numeric_limits<decltype(m_NumCommandsToFlush)>::max() : EngineCI.NumCommandsToFlushCmdList,
         bIsDeferred
     },
+    m_GraphicsResources{false},
+    m_ComputeResources {true },
     m_DynamicHeap
     {
         pDeviceD3D12Impl->GetDynamicMemoryManager(),
@@ -222,7 +224,16 @@ void DeviceContextD3D12Impl::SetPipelineState(IPipelineState* pPipelineState)
 
     TDeviceContextBase::SetPipelineState(pPipelineStateD3D12, 0 /*Dummy*/);
 
-    auto& CmdCtx = GetCmdContext();
+    auto& CmdCtx        = GetCmdContext();
+    auto& RootInfo      = GetRootTableInfo(PSODesc.PipelineType);
+    auto* pd3d12RootSig = pPipelineStateD3D12->GetRootSignature()->GetD3D12RootSignature();
+
+    if (RootInfo.pRootSig != pd3d12RootSig)
+    {
+        RootInfo.pRootSig            = pd3d12RootSig;
+        RootInfo.bRootTablesCommited = false;
+        RootInfo.bRootViewsCommitted = false;
+    }
 
     switch (PSODesc.PipelineType)
     {
@@ -233,6 +244,7 @@ void DeviceContextD3D12Impl::SetPipelineState(IPipelineState* pPipelineState)
             auto& GraphicsCtx      = CmdCtx.AsGraphicsContext();
             auto* pd3d12PSO        = pPipelineStateD3D12->GetD3D12PipelineState();
             GraphicsCtx.SetPipelineState(pd3d12PSO);
+            GraphicsCtx.SetGraphicsRootSignature(pd3d12RootSig);
 
             if (PSODesc.PipelineType == PIPELINE_TYPE_GRAPHICS)
             {
@@ -260,20 +272,62 @@ void DeviceContextD3D12Impl::SetPipelineState(IPipelineState* pPipelineState)
         case PIPELINE_TYPE_COMPUTE:
         {
             auto* pd3d12PSO = pPipelineStateD3D12->GetD3D12PipelineState();
-            CmdCtx.AsComputeContext().SetPipelineState(pd3d12PSO);
+            auto& CompCtx   = CmdCtx.AsComputeContext();
+            CompCtx.SetPipelineState(pd3d12PSO);
+            CompCtx.SetComputeRootSignature(pd3d12RootSig);
             break;
         }
         case PIPELINE_TYPE_RAY_TRACING:
         {
             auto* pd3d12SO = pPipelineStateD3D12->GetD3D12StateObject();
-            CmdCtx.AsGraphicsContext4().SetRayTracingPipelineState(pd3d12SO);
+            auto& RTCtx    = CmdCtx.AsGraphicsContext4();
+            RTCtx.SetRayTracingPipelineState(pd3d12SO);
+            RTCtx.SetComputeRootSignature(pd3d12RootSig);
             break;
         }
         default:
             UNEXPECTED("unknown pipeline type");
     }
+}
 
-    m_State.bRootViewsCommitted = false;
+void DeviceContextD3D12Impl::CommitRootTables(RootTableInfo& RootInfo)
+{
+    const auto& RootSig = *m_pPipelineState->GetRootSignature();
+    auto&       CmdCtx  = GetCmdContext();
+
+    if (!RootInfo.bRootTablesCommited)
+    {
+        RootInfo.bRootTablesCommited = true;
+
+        for (Uint32 s = 0; s < RootSig.GetSignatureCount(); ++s)
+        {
+            auto* pSignature = RootSig.GetSignature(s);
+            auto* pSRB       = RootInfo.SRBs[s];
+
+            if (pSignature == nullptr)
+                continue;
+
+            VERIFY_EXPR(pSRB != nullptr);
+            pSignature->CommitRootTables(pSRB->GetResourceCache(), CmdCtx, this, GetContextId(), RootInfo.IsCompute, RootSig.GetFirstRootIndex(s));
+        }
+    }
+
+    if (!RootInfo.bRootViewsCommitted)
+    {
+        RootInfo.bRootViewsCommitted = true;
+
+        for (Uint32 s = 0; s < RootSig.GetSignatureCount(); ++s)
+        {
+            auto* pSignature = RootSig.GetSignature(s);
+            auto* pSRB       = RootInfo.SRBs[s];
+
+            if (pSignature == nullptr)
+                continue;
+
+            VERIFY_EXPR(pSRB != nullptr);
+            pSignature->CommitRootViews(pSRB->GetResourceCache(), CmdCtx, this, GetContextId(), RootInfo.IsCompute, RootSig.GetFirstRootIndex(s));
+        }
+    }
 }
 
 void DeviceContextD3D12Impl::TransitionShaderResources(IPipelineState* pPipelineState, IShaderResourceBinding* pShaderResourceBinding)
@@ -285,11 +339,11 @@ void DeviceContextD3D12Impl::TransitionShaderResources(IPipelineState* pPipeline
         return;
     }
 
-    auto& Ctx                  = GetCmdContext();
+    auto& CmdCtx               = GetCmdContext();
     auto* pResBindingD3D12Impl = ValidatedCast<ShaderResourceBindingD3D12Impl>(pShaderResourceBinding);
     auto& ResourceCache        = pResBindingD3D12Impl->GetResourceCache();
 
-    pResBindingD3D12Impl->GetSignature()->TransitionResources(ResourceCache, Ctx, true, false);
+    pResBindingD3D12Impl->GetSignature()->TransitionResources(ResourceCache, CmdCtx, true, false);
 }
 
 void DeviceContextD3D12Impl::CommitShaderResources(IShaderResourceBinding* pShaderResourceBinding, RESOURCE_STATE_TRANSITION_MODE StateTransitionMode)
@@ -299,10 +353,14 @@ void DeviceContextD3D12Impl::CommitShaderResources(IShaderResourceBinding* pShad
 
     auto* pResBindingD3D12Impl = ValidatedCast<ShaderResourceBindingD3D12Impl>(pShaderResourceBinding);
     auto& ResourceCache        = pResBindingD3D12Impl->GetResourceCache();
-    auto& Ctx                  = GetCmdContext();
+    auto& CmdCtx               = GetCmdContext();
+    auto* pSignature           = pResBindingD3D12Impl->GetSignature();
 
-    // AZ TODO:
+    //if (pSignature->GetTotalRootCount() == 0)
+    //{
     // Ignore SRBs that contain no resources
+    //    return;
+    //}
 
 #ifdef DILIGENT_DEBUG
     //ResourceCache.DbgVerifyDynamicBuffersCounter();
@@ -310,17 +368,74 @@ void DeviceContextD3D12Impl::CommitShaderResources(IShaderResourceBinding* pShad
 
     if (StateTransitionMode == RESOURCE_STATE_TRANSITION_MODE_TRANSITION)
     {
-        pResBindingD3D12Impl->GetSignature()->TransitionResources(ResourceCache, Ctx, true, false);
+        pSignature->TransitionResources(ResourceCache, CmdCtx, true, false);
     }
 #ifdef DILIGENT_DEVELOPMENT
     else if (StateTransitionMode == RESOURCE_STATE_TRANSITION_MODE_VERIFY)
     {
-        pResBindingD3D12Impl->GetSignature()->TransitionResources(ResourceCache, Ctx, false, true);
+        pSignature->TransitionResources(ResourceCache, CmdCtx, false, true);
     }
 #endif
-    
-    // AZ TODO
+
+    auto& RootInfo = GetRootTableInfo(pSignature->GetPipelineType());
+
+    RootInfo.SRBs[pSignature->GetDesc().BindingIndex] = pResBindingD3D12Impl;
+
+    RootInfo.bRootTablesCommited = false;
+    RootInfo.bRootViewsCommitted = false;
 }
+
+DeviceContextD3D12Impl::RootTableInfo& DeviceContextD3D12Impl::GetRootTableInfo(PIPELINE_TYPE PipelineType)
+{
+    return PipelineType == PIPELINE_TYPE_GRAPHICS || PipelineType == PIPELINE_TYPE_MESH ?
+        m_GraphicsResources :
+        m_ComputeResources;
+}
+
+#ifdef DILIGENT_DEVELOPMENT
+void DeviceContextD3D12Impl::DvpValidateCommittedShaderResources()
+{
+    if (m_State.CommittedResourcesValidated)
+        return;
+
+    const auto& RootSig   = *m_pPipelineState->GetRootSignature();
+    auto&       RootInfo  = GetRootTableInfo(m_pPipelineState->GetDesc().PipelineType);
+    const auto  SignCount = RootSig.GetSignatureCount();
+
+    for (Uint32 i = 0; i < SignCount; ++i)
+    {
+        auto* pSignature = RootSig.GetSignature(i);
+        if (pSignature == nullptr)
+            continue;
+
+        if (pSignature->GetTotalRootCount() == 0)
+        {
+            // Skip signatures without any resources
+            continue;
+        }
+
+        const auto* pSRB = RootInfo.SRBs[i];
+        if (pSRB == nullptr)
+        {
+            LOG_ERROR_MESSAGE("Shader resource binding is not bound to index (", i, ").");
+            continue;
+        }
+
+        auto* pSRBSign = pSRB->GetSignature();
+        VERIFY_EXPR(pSRBSign != nullptr);
+
+        if (!pSignature->IsCompatibleWith(*pSRBSign))
+        {
+            LOG_ERROR_MESSAGE("Shader resource binding at index ", i, " with signature '", pSRBSign->GetDesc().Name,
+                              "' is not compatible with pipeline layout in current pipeline '", m_pPipelineState->GetDesc().Name, "'.");
+        }
+    }
+
+    //m_pPipelineState->DvpVerifySRBResources(RootInfo.SRBs);
+
+    m_State.CommittedResourcesValidated = true;
+}
+#endif
 
 void DeviceContextD3D12Impl::SetStencilRef(Uint32 StencilRef)
 {
@@ -460,38 +575,15 @@ void DeviceContextD3D12Impl::PrepareForDraw(GraphicsContext& GraphCtx, DRAW_FLAG
     }
 #endif
 
-    GraphCtx.SetGraphicsRootSignature(m_pPipelineState->GetD3D12RootSignature());
+    auto& RootInfo = GetRootTableInfo(PIPELINE_TYPE_GRAPHICS);
+    if (RootInfo.RequireUpdate(Flags & DRAW_FLAG_DYNAMIC_RESOURCE_BUFFERS_INTACT))
+    {
+        CommitRootTables(RootInfo);
+    }
 
-    /*if (m_State.pCommittedResourceCache != nullptr)
-    {
-        if (m_State.pCommittedResourceCache->GetNumDynamicCBsBound() > 0)
-        {
-            if (!m_State.bRootViewsCommitted || (Flags & DRAW_FLAG_DYNAMIC_RESOURCE_BUFFERS_INTACT) == 0)
-            {
-                // Only process dynamic buffers. Non-dynamic buffers are committed by CommitShaderResources
-                m_pPipelineState->GetRootSignature()
-                    .CommitRootViews(*m_State.pCommittedResourceCache,
-                                     GraphCtx,
-                                     false, // IsCompute
-                                     m_ContextId,
-                                     this,
-                                     true,  // CommitViews
-                                     true,  // ProcessDynamicBuffers
-                                     false, // ProcessNonDynamicBuffers
-                                     false, // TransitionStates
-                                     false  // ValidateStates
-                    );
-                m_State.bRootViewsCommitted = true;
-            }
-        }
-    }
 #ifdef DILIGENT_DEVELOPMENT
-    else
-    {
-        if (m_pPipelineState->ContainsShaderResources())
-            LOG_ERROR_MESSAGE("Pipeline state '", m_pPipelineState->GetDesc().Name, "' contains shader resources, but IDeviceContext::CommitShaderResources() was not called with non-null SRB");
-    }
-#endif*/
+    DvpValidateCommittedShaderResources();
+#endif
 }
 
 void DeviceContextD3D12Impl::PrepareForIndexedDraw(GraphicsContext& GraphCtx, DRAW_FLAGS Flags, VALUE_TYPE IndexType)
@@ -616,64 +708,28 @@ void DeviceContextD3D12Impl::DrawMeshIndirect(const DrawMeshIndirectAttribs& Att
 
 void DeviceContextD3D12Impl::PrepareForDispatchCompute(ComputeContext& ComputeCtx)
 {
-    ComputeCtx.SetComputeRootSignature(m_pPipelineState->GetD3D12RootSignature());
-    /*if (m_State.pCommittedResourceCache != nullptr)
+    auto& RootInfo = GetRootTableInfo(PIPELINE_TYPE_COMPUTE);
+    if (RootInfo.RequireUpdate())
     {
-        if (m_State.pCommittedResourceCache->GetNumDynamicCBsBound() > 0)
-        {
-            // Only process dynamic buffers. Non-dynamic buffers are committed by CommitShaderResources
-            m_pPipelineState->GetRootSignature()
-                .CommitRootViews(*m_State.pCommittedResourceCache,
-                                 ComputeCtx,
-                                 true, // IsCompute
-                                 m_ContextId,
-                                 this,
-                                 true,  // CommitViews
-                                 true,  // ProcessDynamicBuffers
-                                 false, // ProcessNonDynamicBuffers
-                                 false, // TransitionStates
-                                 false  // ValidateStates
-                );
-        }
+        CommitRootTables(RootInfo);
     }
+
 #ifdef DILIGENT_DEVELOPMENT
-    else
-    {
-        if (m_pPipelineState->ContainsShaderResources())
-            LOG_ERROR_MESSAGE("Pipeline state '", m_pPipelineState->GetDesc().Name, "' contains shader resources, but IDeviceContext::CommitShaderResources() was not called with non-null SRB");
-    }
-#endif*/
+    DvpValidateCommittedShaderResources();
+#endif
 }
 
 void DeviceContextD3D12Impl::PrepareForDispatchRays(GraphicsContext& GraphCtx)
 {
-    GraphCtx.SetComputeRootSignature(m_pPipelineState->GetD3D12RootSignature());
-    /*if (m_State.pCommittedResourceCache != nullptr)
+    auto& RootInfo = GetRootTableInfo(PIPELINE_TYPE_RAY_TRACING);
+    if (RootInfo.RequireUpdate())
     {
-        if (m_State.pCommittedResourceCache->GetNumDynamicCBsBound() > 0)
-        {
-            // Only process dynamic buffers. Non-dynamic buffers are committed by CommitShaderResources
-            m_pPipelineState->GetRootSignature()
-                .CommitRootViews(*m_State.pCommittedResourceCache,
-                                 GraphCtx,
-                                 true, // IsCompute
-                                 m_ContextId,
-                                 this,
-                                 true,  // CommitViews
-                                 true,  // ProcessDynamicBuffers
-                                 false, // ProcessNonDynamicBuffers
-                                 false, // TransitionStates
-                                 false  // ValidateStates
-                );
-        }
+        CommitRootTables(RootInfo);
     }
+
 #ifdef DILIGENT_DEVELOPMENT
-    else
-    {
-        if (m_pPipelineState->ContainsShaderResources())
-            LOG_ERROR_MESSAGE("Pipeline state '", m_pPipelineState->GetDesc().Name, "' contains shader resources, but IDeviceContext::CommitShaderResources() was not called with non-null SRB");
-    }
-#endif*/
+    DvpValidateCommittedShaderResources();
+#endif
 }
 
 void DeviceContextD3D12Impl::DispatchCompute(const DispatchComputeAttribs& Attribs)
@@ -809,6 +865,9 @@ void DeviceContextD3D12Impl::Flush(bool RequestNewCmdCtx)
         RequestCommandContext(m_pDevice);
 
     m_State = State{};
+
+    m_GraphicsResources = RootTableInfo{false};
+    m_ComputeResources  = RootTableInfo{true};
 
     // Setting pipeline state to null makes sure that render targets and other
     // states will be restored in the command list next time a PSO is bound.

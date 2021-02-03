@@ -1202,7 +1202,7 @@ String GetPipelineResourceFlagsString(PIPELINE_RESOURCE_FLAGS Flags, bool GetFul
             case PIPELINE_RESOURCE_FLAG_FORMATTED_BUFFER:
                 Str.append(GetFullName ? "PIPELINE_RESOURCE_FLAG_FORMATTED_BUFFER" : "FORMATTED_BUFFER");
                 break;
-                
+
             case PIPELINE_RESOURCE_FLAG_RUNTIME_ARRAY:
                 Str.append(GetFullName ? "PIPELINE_RESOURCE_FLAG_RUNTIME_ARRAY" : "RUNTIME_ARRAY");
                 break;

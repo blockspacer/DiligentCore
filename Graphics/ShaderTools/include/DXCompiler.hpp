@@ -84,7 +84,7 @@ public:
                          IDxcBlob**              ppByteCodeBlob,
                          std::vector<uint32_t>*  pByteCode,
                          IDataBlob**             ppCompilerOutput) noexcept(false) = 0;
-    
+
 
     using BindInfo            = ResourceBinding::BindInfo;
     using TResourceBindingMap = ResourceBinding::TMap;

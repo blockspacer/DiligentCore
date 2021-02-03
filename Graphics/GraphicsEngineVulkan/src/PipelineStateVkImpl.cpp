@@ -773,8 +773,8 @@ void PipelineStateVkImpl::InitPipelineLayout(const PipelineStateCreateInfo& Crea
                         {
                             if (Res.ArraySize == 0)
                             {
-                                LOG_ERROR_AND_THROW("Is shader '", pShader->GetDesc().Name, "' resource '", Res.Name, "' uses runtime sized array,"
-                                                    " you must explicitlly set resource signature to specify array size");
+                                LOG_ERROR_AND_THROW("Is shader '", pShader->GetDesc().Name, "' resource '", Res.Name, "' uses runtime sized array, ",
+                                                    "you must explicitlly set resource signature to specify array size");
                             }
 
                             SHADER_RESOURCE_TYPE    Type;
@@ -1048,13 +1048,12 @@ bool PipelineStateVkImpl::IsCompatibleWith(const IPipelineState* pPSO) const
     if (lhs.GetSignatureCount() != rhs.GetSignatureCount())
         return false;
 
-    if (lhs.GetSignatureCount() == 0)
-        return true;
-
-    if (lhs.GetSignatureCount() == 1)
-        return lhs.GetSignature(0)->IsCompatibleWith(*rhs.GetSignature(0));
-
-    return false;
+    for (Uint32 s = 0, SigCount = lhs.GetSignatureCount(); s < SigCount; ++s)
+    {
+        if (!lhs.GetSignature(s)->IsCompatibleWith(*rhs.GetSignature(s)))
+            return false;
+    }
+    return true;
 }
 
 #ifdef DILIGENT_DEVELOPMENT

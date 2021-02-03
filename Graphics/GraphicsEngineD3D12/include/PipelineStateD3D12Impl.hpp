@@ -59,10 +59,10 @@ public:
     virtual bool DILIGENT_CALL_TYPE IsCompatibleWith(const IPipelineState* pPSO) const override final;
 
     /// Implementation of IPipelineState::GetResourceSignatureCount() in Direct3D12 backend.
-    virtual Uint32 DILIGENT_CALL_TYPE GetResourceSignatureCount() const override final { return m_RootSig.GetSignatureCount(); }
+    virtual Uint32 DILIGENT_CALL_TYPE GetResourceSignatureCount() const override final { return GetSignatureCount(); }
 
     /// Implementation of IPipelineState::GetResourceSignature() in Direct3D12 backend.
-    virtual IPipelineResourceSignature* DILIGENT_CALL_TYPE GetResourceSignature(Uint32 Index) const override final { return m_RootSig.GetSignature(Index); }
+    virtual IPipelineResourceSignature* DILIGENT_CALL_TYPE GetResourceSignature(Uint32 Index) const override final { return GetSignature(Index); }
 
     /// Implementation of IPipelineStateD3D12::GetD3D12PipelineState().
     virtual ID3D12PipelineState* DILIGENT_CALL_TYPE GetD3D12PipelineState() const override final { return static_cast<ID3D12PipelineState*>(m_pd3d12PSO.p); }
@@ -71,11 +71,17 @@ public:
     virtual ID3D12StateObject* DILIGENT_CALL_TYPE GetD3D12StateObject() const override final { return static_cast<ID3D12StateObject*>(m_pd3d12PSO.p); }
 
     /// Implementation of IPipelineStateD3D12::GetD3D12RootSignature().
-    virtual ID3D12RootSignature* DILIGENT_CALL_TYPE GetD3D12RootSignature() const override final { return m_RootSig.GetD3D12RootSignature(); }
+    virtual ID3D12RootSignature* DILIGENT_CALL_TYPE GetD3D12RootSignature() const override final { return m_RootSig->GetD3D12RootSignature(); }
 
-    const RootSignature& GetRootSignature() const { return m_RootSig; }
+    const RootSignatureD3D12* GetRootSignature() const { return m_RootSig; }
 
-    bool ContainsShaderResources() const;
+    Uint32 GetSignatureCount() const { return m_SignatureCount; }
+
+    PipelineResourceSignatureD3D12Impl* GetSignature(Uint32 index) const
+    {
+        VERIFY_EXPR(index < m_SignatureCount);
+        return m_Signatures[index].RawPtr<PipelineResourceSignatureD3D12Impl>();
+    }
 
 private:
     struct ShaderStageInfo
@@ -95,16 +101,27 @@ private:
     template <typename PSOCreateInfoType>
     void InitInternalObjects(const PSOCreateInfoType& CreateInfo,
                              TShaderStages&           ShaderStages,
-                             LocalRootSignature*      pLocalRootSig = nullptr);
+                             LocalRootSignatureD3D12* pLocalRootSig = nullptr);
 
     void InitRootSignature(const PipelineStateCreateInfo& CreateInfo,
                            TShaderStages&                 ShaderStages,
-                           LocalRootSignature*            pLocalRootSig);
+                           LocalRootSignatureD3D12*       pLocalRootSig);
+
+    void CreateDefaultResourceSignature(const PipelineStateCreateInfo& CreateInfo,
+                                        TShaderStages&                 ShaderStages,
+                                        LocalRootSignatureD3D12*       pLocalRootSig,
+                                        IPipelineResourceSignature**   ppImplicitSignature);
 
     void Destruct();
 
-    CComPtr<ID3D12DeviceChild> m_pd3d12PSO;
-    RootSignature              m_RootSig;
+private:
+    CComPtr<ID3D12DeviceChild>        m_pd3d12PSO;
+    RefCntAutoPtr<RootSignatureD3D12> m_RootSig;
+
+    using SignatureArrayType = RootSignatureD3D12::SignatureArrayType;
+
+    Uint8              m_SignatureCount = 0;
+    SignatureArrayType m_Signatures     = {};
 
     void* m_pRawMem = nullptr; // AZ TODO: move to base class
 

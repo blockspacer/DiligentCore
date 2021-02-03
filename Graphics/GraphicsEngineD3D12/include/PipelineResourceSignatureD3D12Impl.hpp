@@ -40,13 +40,14 @@ namespace Diligent
 
 class CommandContext;
 class RenderDeviceD3D12Impl;
+class DeviceContextD3D12Impl;
 class ShaderResourceCacheD3D12;
 class ShaderVariableManagerD3D12;
 
 /// Implementation of the Diligent::PipelineResourceSignatureD3D12Impl class
 class PipelineResourceSignatureD3D12Impl final : public PipelineResourceSignatureBase<IPipelineResourceSignature, RenderDeviceD3D12Impl>
 {
-    friend class RootSignature;
+    friend class RootSignatureD3D12;
 
 public:
     using TPipelineResourceSignatureBase = PipelineResourceSignatureBase<IPipelineResourceSignature, RenderDeviceD3D12Impl>;
@@ -66,44 +67,56 @@ public:
     struct ResourceAttribs
     {
     private:
-        static constexpr Uint32 _SpaceBits      = 8;
-        static constexpr Uint32 _BindPointBits  = 16;
-        static constexpr Uint32 _RootIndexBits  = 16;
-        static constexpr Uint32 _SamplerIndBits = 16;
+        static constexpr Uint32 _SpaceBits           = 8;
+        static constexpr Uint32 _BindPointBits       = 16;
+        static constexpr Uint32 _RootIndexBits       = 16;
+        static constexpr Uint32 _SamplerIndBits      = 16;
+        static constexpr Uint32 _SamplerAssignedBits = 1;
 
     public:
         static constexpr Uint32 InvalidSamplerInd = (1u << _SamplerIndBits) - 1;
         static constexpr Uint32 InvalidRootIndex  = (1u << _RootIndexBits) - 1;
         static constexpr Uint32 InvalidBindPoint  = (1u << _BindPointBits) - 1;
+        static constexpr Uint32 InvalidOffset     = ~0u;
 
         // clang-format off
         const Uint32  BindPoint            : _BindPointBits;       // 
-        const Uint32  TableIndex           : _RootIndexBits;       // Root table index
+        const Uint32  RootIndex            : _RootIndexBits;       // Root view/table index
         const Uint32  SamplerInd           : _SamplerIndBits;      // Index in m_Desc.Resources and m_pResourceAttribs
         const Uint32  Space                : _SpaceBits;           // Space index
+        const Uint32  ImtblSamplerAssigned : _SamplerAssignedBits; // Immutable sampler flag
+        const Uint32  RootView             : 1;
         const Uint32  OffsetFromTableStart;                        // Offset in the resource cache
         // clang-format on
 
         ResourceAttribs(Uint32 _BindPoint,
                         Uint32 _Space,
-                        Uint32 _TableIndex,
+                        Uint32 _RootIndex,
                         Uint32 _SamplerInd,
-                        Uint32 _OffsetFromTableStart) noexcept :
+                        Uint32 _OffsetFromTableStart,
+                        bool   _ImtblSamplerAssigned,
+                        bool   _IsRootView) noexcept :
             // clang-format off
-            BindPoint           {_BindPoint           },
-            TableIndex          {_TableIndex          },   
-            SamplerInd          {_SamplerInd          },
-            Space               {_Space               },
-            OffsetFromTableStart{_OffsetFromTableStart}
+            BindPoint           {_BindPoint                     },
+            RootIndex           {_RootIndex                     },
+            SamplerInd          {_SamplerInd                    },
+            Space               {_Space                         },
+            ImtblSamplerAssigned{_ImtblSamplerAssigned ? 1u : 0u},
+            RootView            {_IsRootView ? 1u : 0u          },
+            OffsetFromTableStart{_OffsetFromTableStart          }
         // clang-format on
         {
             VERIFY(BindPoint == _BindPoint, "Bind point (", _BindPoint, ") exceeds maximum representable value");
-            VERIFY(TableIndex == _TableIndex, "Root table index (", _TableIndex, ") exceeds maximum representable value");
+            VERIFY(RootIndex == _RootIndex, "Root index (", _RootIndex, ") exceeds maximum representable value");
             VERIFY(SamplerInd == _SamplerInd, "Sampler index (", _SamplerInd, ") exceeds maximum representable value");
             VERIFY(Space == _Space, "Space (", Space, ") exceeds maximum representable value");
         }
 
+        bool IsValidRootIndex() const { return RootIndex != InvalidRootIndex; }
+        bool IsValidOffset() const { return OffsetFromTableStart != InvalidOffset; }
+        bool IsImmutableSamplerAssigned() const { return ImtblSamplerAssigned != 0; }
         bool IsCombinedWithSampler() const { return SamplerInd != InvalidSamplerInd; }
+        bool IsRootView() const { return RootView != 0; }
     };
 
     const ResourceAttribs& GetResourceAttribs(Uint32 ResIndex) const
@@ -116,6 +129,32 @@ public:
     {
         VERIFY_EXPR(ResIndex < m_Desc.NumResources);
         return m_Desc.Resources[ResIndex];
+    }
+
+    struct ImmutableSamplerAttribs
+    {
+        Uint32 ArraySize      = 1;
+        Uint32 ShaderRegister = ~0u;
+        Uint32 RegisterSpace  = ~0u;
+
+        bool IsAssigned() const { return ShaderRegister != ~0u; }
+    };
+
+    const ImmutableSamplerAttribs& GetImmutableSamplerAttribs(Uint32 SampIndex) const
+    {
+        VERIFY_EXPR(SampIndex < m_Desc.NumImmutableSamplers);
+        return m_ImmutableSamplers[SampIndex];
+    }
+
+    const ImmutableSamplerDesc& GetImmutableSamplerDesc(Uint32 SampIndex) const
+    {
+        VERIFY_EXPR(SampIndex < m_Desc.NumImmutableSamplers);
+        return m_Desc.ImmutableSamplers[SampIndex];
+    }
+
+    Uint32 GetTotalRootCount() const
+    {
+        return m_RootParams.GetNumRootTables() + m_RootParams.GetNumRootViews();
     }
 
     virtual void DILIGENT_CALL_TYPE CreateShaderResourceBinding(IShaderResourceBinding** ppShaderResourceBinding,
@@ -167,6 +206,20 @@ public:
                  ShaderResourceCacheD3D12& ResourceCache) const;
 
     void TransitionResources(ShaderResourceCacheD3D12& ResourceCache, CommandContext& Ctx, bool PerformResourceTransitions, bool ValidateStates) const;
+
+    void CommitRootTables(ShaderResourceCacheD3D12& ResourceCache,
+                          CommandContext&           Ctx,
+                          DeviceContextD3D12Impl*   pDeviceCtx,
+                          Uint32                    DeviceCtxId,
+                          bool                      IsCompute,
+                          Uint32                    FirstRootIndex);
+
+    void CommitRootViews(ShaderResourceCacheD3D12& ResourceCache,
+                         CommandContext&           Ctx,
+                         DeviceContextD3D12Impl*   pDeviceCtx,
+                         Uint32                    DeviceCtxId,
+                         bool                      IsCompute,
+                         Uint32                    FirstRootIndex);
 
 private:
     enum ROOT_TYPE : Uint8
@@ -335,7 +388,7 @@ private:
                               bool                          IsRootView,
                               Uint32                        BindPoint,
                               Uint32                        Space,
-                              Uint32&                       TableIndex,
+                              Uint32&                       RootIndex,
                               Uint32&                       OffsetFromTableStart);
 
     size_t CalculateHash() const;
@@ -343,6 +396,8 @@ private:
     void Destruct();
 
     std::vector<Uint32, STDAllocatorRawMem<Uint32>> GetCacheTableSizes() const;
+
+    Uint32 FindAssignedSampler(const PipelineResourceDesc& SepImg) const;
 
 private:
     static constexpr Uint8  InvalidRootTableIndex    = static_cast<Uint8>(-1);
@@ -369,6 +424,8 @@ private:
 
     ShaderResourceCacheD3D12*   m_pStaticResCache = nullptr;
     ShaderVariableManagerD3D12* m_StaticVarsMgrs  = nullptr; // [m_NumShaderStages]
+
+    ImmutableSamplerAttribs* m_ImmutableSamplers = nullptr; // [m_Desc.NumImmutableSamplers]
 
     RootParamsManager m_RootParams;
 

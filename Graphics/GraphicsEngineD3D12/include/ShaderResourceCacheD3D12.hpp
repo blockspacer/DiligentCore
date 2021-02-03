@@ -140,7 +140,7 @@ public:
         inline const Resource& GetResource(Uint32                           OffsetFromTableStart,
                                            const D3D12_DESCRIPTOR_HEAP_TYPE dbgDescriptorHeapType) const
         {
-            VERIFY(m_dbgHeapType == dbgDescriptorHeapType, "Incosistent descriptor heap type");
+            //VERIFY(m_dbgHeapType == dbgDescriptorHeapType, "Incosistent descriptor heap type");
             //VERIFY(dbgRefShaderType == SHADER_TYPE_UNKNOWN || m_dbgShaderType == SHADER_TYPE_UNKNOWN || m_dbgShaderType == dbgRefShaderType, "Incosistent shader type");
 
             VERIFY(OffsetFromTableStart < m_NumResources, "Root table is not large enough to store descriptor at offset ", OffsetFromTableStart);
@@ -163,18 +163,18 @@ public:
                              const SHADER_TYPE                dbgRefShaderType)
         {
             VERIFY_EXPR(m_NumResources == MaxOffset);
-            m_dbgHeapType   = dbgDescriptorHeapType;
+            //m_dbgHeapType   = dbgDescriptorHeapType;
             //m_dbgShaderType = dbgRefShaderType;
         }
 
-        D3D12_DESCRIPTOR_HEAP_TYPE DbgGetHeapType() const { return m_dbgHeapType; }
+        //D3D12_DESCRIPTOR_HEAP_TYPE DbgGetHeapType() const { return m_dbgHeapType; }
 #endif
 
         const Uint32 m_NumResources = 0;
 
     private:
 #ifdef DILIGENT_DEBUG
-        D3D12_DESCRIPTOR_HEAP_TYPE m_dbgHeapType   = D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES;
+        //D3D12_DESCRIPTOR_HEAP_TYPE m_dbgHeapType   = D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES;
         //SHADER_TYPE                m_dbgShaderType = SHADER_TYPE_UNKNOWN;
 #endif
 
@@ -197,7 +197,7 @@ public:
     void SetDescriptorHeapSpace(DescriptorHeapAllocation&& CbcSrvUavHeapSpace, DescriptorHeapAllocation&& SamplerHeapSpace)
     {
         VERIFY(m_SamplerHeapSpace.GetCpuHandle().ptr == 0 && m_CbvSrvUavHeapSpace.GetCpuHandle().ptr == 0, "Space has already been allocated in GPU descriptor heaps");
-#ifdef DILIGENT_DEBUG
+#if 0 //def DILIGENT_DEBUG
         Uint32 NumSamplerDescriptors = 0, NumSrvCbvUavDescriptors = 0;
         for (Uint32 rt = 0; rt < m_NumTables; ++rt)
         {
@@ -232,7 +232,7 @@ public:
     D3D12_CPU_DESCRIPTOR_HANDLE GetShaderVisibleTableCPUDescriptorHandle(Uint32 RootParamInd, Uint32 OffsetFromTableStart = 0) const
     {
         const auto& RootParam = GetRootTable(RootParamInd);
-        VERIFY(HeapType == RootParam.DbgGetHeapType(), "Invalid descriptor heap type");
+        //VERIFY(HeapType == RootParam.DbgGetHeapType(), "Invalid descriptor heap type");
 
         D3D12_CPU_DESCRIPTOR_HANDLE CPUDescriptorHandle = {0};
         // Descriptor heap allocation is not assigned for dynamic resources or
@@ -269,7 +269,7 @@ public:
         VERIFY(OffsetFromTableStart < RootParam.m_NumResources, "Offset is out of range");
 
         D3D12_GPU_DESCRIPTOR_HANDLE GPUDescriptorHandle = {0};
-        VERIFY(HeapType == RootParam.DbgGetHeapType(), "Invalid descriptor heap type");
+        //VERIFY(HeapType == RootParam.DbgGetHeapType(), "Invalid descriptor heap type");
         if (HeapType == D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER)
         {
             VERIFY_EXPR(!m_SamplerHeapSpace.IsNull());

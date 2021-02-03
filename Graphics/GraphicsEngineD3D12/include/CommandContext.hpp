@@ -248,6 +248,7 @@ protected:
 class ComputeContext : public CommandContext
 {
 public:
+    // For compute and ray tracing.
     void SetComputeRootSignature(ID3D12RootSignature* pRootSig)
     {
         if (pRootSig != m_pCurComputeRootSignature)

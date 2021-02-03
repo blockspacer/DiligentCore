@@ -38,51 +38,53 @@
 namespace Diligent
 {
 
-RootSignature::RootSignature()
+RootSignatureD3D12::RootSignatureD3D12(IReferenceCounters*                                      pRefCounters,
+                                       RenderDeviceD3D12Impl*                                   pDeviceD3D12Impl,
+                                       const RefCntAutoPtr<PipelineResourceSignatureD3D12Impl>* ppSignatures,
+                                       Uint32                                                   SignatureCount) :
+    ObjectBase<IObject>{pRefCounters},
+    m_SignatureCount{static_cast<Uint8>(SignatureCount)},
+    m_pDeviceD3D12Impl{pDeviceD3D12Impl}
 {
-}
-
-void RootSignature::Create(RenderDeviceD3D12Impl* pDeviceD3D12Impl, PIPELINE_TYPE PipelineType, IPipelineResourceSignature** ppSignatures, Uint32 SignatureCount)
-{
-    VERIFY(m_SignatureCount == 0 && m_pd3d12RootSignature == nullptr,
-           "This root signature is already initialized");
+    VERIFY(m_SignatureCount == SignatureCount, "Signature count (", SignatureCount, ") exceeds maximum representable value");
 
     for (Uint32 i = 0; i < SignatureCount; ++i)
     {
-        auto* pSignature = ValidatedCast<PipelineResourceSignatureD3D12Impl>(ppSignatures[i]);
-        VERIFY(pSignature != nullptr, "Pipeline resource signature at index ", i, " is null. This error should've been caught by ValidatePipelineResourceSignatures.");
+        m_Signatures[i] = ppSignatures[i];
 
-        const Uint8 Index = pSignature->GetDesc().BindingIndex;
-
-#ifdef DILIGENT_DEBUG
-        VERIFY(Index < m_Signatures.size(),
-               "Pipeline resource signature specifies binding index ", Uint32{Index}, " that exceeds the limit (", m_Signatures.size() - 1,
-               "). This error should've been caught by ValidatePipelineResourceSignatureDesc.");
-
-        VERIFY(m_Signatures[Index] == nullptr,
-               "Pipeline resource signature '", pSignature->GetDesc().Name, "' at index ", Uint32{Index},
-               " conflicts with another resource signature '", m_Signatures[Index]->GetDesc().Name,
-               "' that uses the same index. This error should've been caught by ValidatePipelineResourceSignatures.");
-
-        for (Uint32 s = 0, StageCount = pSignature->GetNumActiveShaderStages(); s < StageCount; ++s)
+        if (ppSignatures[i] != nullptr)
         {
-            const auto ShaderType = pSignature->GetActiveShaderStageType(s);
-            VERIFY(IsConsistentShaderType(ShaderType, PipelineType),
-                   "Pipeline resource signature '", pSignature->GetDesc().Name, "' at index ", Uint32{Index},
-                   " has shader stage '", GetShaderTypeLiteralName(ShaderType), "' that is not compatible with pipeline type '",
-                   GetPipelineTypeString(PipelineType), "'.");
+            VERIFY(ppSignatures[i]->GetDesc().BindingIndex == i, "Signature placed to another binding index");
         }
-#endif
-
-        m_SignatureCount    = std::max<Uint8>(m_SignatureCount, Index + 1);
-        m_Signatures[Index] = pSignature;
     }
 
-    D3D12_ROOT_SIGNATURE_DESC rootSignatureDesc = {};
-    rootSignatureDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+    if (m_SignatureCount > 0)
+    {
+        HashCombine(m_Hash, m_SignatureCount);
+        for (Uint32 i = 0; i < m_SignatureCount; ++i)
+        {
+            if (m_Signatures[i] != nullptr)
+                HashCombine(m_Hash, m_Signatures[i]->GetHash());
+            else
+                HashCombine(m_Hash, 0);
+        }
+    }
+}
 
-    std::array<Uint32, MAX_RESOURCE_SIGNATURES> FirstRootIndex = {};
-    Uint32                                      TotalParams    = 0;
+RootSignatureD3D12::~RootSignatureD3D12()
+{
+    m_pDeviceD3D12Impl->GetRootSignatureCache().OnDestroyRootSig(this);
+}
+
+void RootSignatureD3D12::Finalize()
+{
+    VERIFY(m_pd3d12RootSignature == nullptr, "This root signature is already initialized");
+
+    D3D12_ROOT_SIGNATURE_DESC rootSignatureDesc = {};
+    rootSignatureDesc.Flags                     = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+    Uint32 TotalParams              = 0;
+    Uint32 TotalD3D12StaticSamplers = 0;
 
     for (Uint32 s = 0; s < m_SignatureCount; ++s)
     {
@@ -91,16 +93,28 @@ void RootSignature::Create(RenderDeviceD3D12Impl* pDeviceD3D12Impl, PIPELINE_TYP
         {
             auto& RootParams = pSignature->m_RootParams;
 
-            FirstRootIndex[s] = TotalParams;
+            m_FirstRootIndex[s] = TotalParams;
             TotalParams += RootParams.GetNumRootTables() + RootParams.GetNumRootViews();
+
+            for (Uint32 samp = 0, SampCount = pSignature->GetImmutableSamplerCount(); samp < SampCount; ++samp)
+            {
+                const auto& ImtblSam = pSignature->GetImmutableSamplerAttribs(samp);
+                VERIFY_EXPR(ImtblSam.IsAssigned());
+
+                TotalD3D12StaticSamplers += ImtblSam.ArraySize;
+            }
         }
     }
 
-    std::vector<D3D12_ROOT_PARAMETER, STDAllocatorRawMem<D3D12_ROOT_PARAMETER>> D3D12Parameters(TotalParams, D3D12_ROOT_PARAMETER{}, STD_ALLOCATOR_RAW_MEM(D3D12_ROOT_PARAMETER, GetRawAllocator(), "Allocator for vector<D3D12_ROOT_PARAMETER>"));
+    std::vector<D3D12_ROOT_PARAMETER, STDAllocatorRawMem<D3D12_ROOT_PARAMETER>>           D3D12Parameters(TotalParams, D3D12_ROOT_PARAMETER{}, STD_ALLOCATOR_RAW_MEM(D3D12_ROOT_PARAMETER, GetRawAllocator(), "Allocator for vector<D3D12_ROOT_PARAMETER>"));
+    std::vector<D3D12_STATIC_SAMPLER_DESC, STDAllocatorRawMem<D3D12_STATIC_SAMPLER_DESC>> D3D12StaticSamplers(STD_ALLOCATOR_RAW_MEM(D3D12_STATIC_SAMPLER_DESC, GetRawAllocator(), "Allocator for vector<D3D12_STATIC_SAMPLER_DESC>"));
+    D3D12StaticSamplers.reserve(TotalD3D12StaticSamplers);
 
-    for (Uint32 s = 0; s < m_SignatureCount; ++s)
+    for (Uint32 sig = 0; sig < m_SignatureCount; ++sig)
     {
-        auto& pSignature = m_Signatures[s];
+        auto&      pSignature     = m_Signatures[sig];
+        const auto FirstRootIndex = m_FirstRootIndex[sig];
+
         if (pSignature != nullptr)
         {
             auto& RootParams = pSignature->m_RootParams;
@@ -108,66 +122,61 @@ void RootSignature::Create(RenderDeviceD3D12Impl* pDeviceD3D12Impl, PIPELINE_TYP
             {
                 const auto&                 RootTable = RootParams.GetRootTable(rt);
                 const D3D12_ROOT_PARAMETER& SrcParam  = RootTable;
-                const Uint32                RootIndex = FirstRootIndex[s] + RootTable.GetLocalRootIndex();
+                const Uint32                RootIndex = FirstRootIndex + RootTable.GetLocalRootIndex();
                 VERIFY(SrcParam.ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE && SrcParam.DescriptorTable.NumDescriptorRanges > 0, "Non-empty descriptor table is expected");
                 D3D12Parameters[RootIndex] = SrcParam;
             }
+
             for (Uint32 rv = 0; rv < RootParams.GetNumRootViews(); ++rv)
             {
                 const auto&                 RootView  = RootParams.GetRootView(rv);
                 const D3D12_ROOT_PARAMETER& SrcParam  = RootView;
-                const Uint32                RootIndex = FirstRootIndex[s] + RootView.GetLocalRootIndex();
+                const Uint32                RootIndex = FirstRootIndex + RootView.GetLocalRootIndex();
                 VERIFY(SrcParam.ParameterType == D3D12_ROOT_PARAMETER_TYPE_CBV, "Root CBV is expected");
                 D3D12Parameters[RootIndex] = SrcParam;
+            }
+
+            for (Uint32 samp = 0, SampCount = pSignature->GetImmutableSamplerCount(); samp < SampCount; ++samp)
+            {
+                const auto& SampAttr = pSignature->GetImmutableSamplerAttribs(samp);
+                const auto& ImtblSam = pSignature->GetImmutableSamplerDesc(samp);
+                const auto& SamDesc  = ImtblSam.Desc;
+
+                for (UINT ArrInd = 0; ArrInd < SampAttr.ArraySize; ++ArrInd)
+                {
+                    D3D12StaticSamplers.emplace_back(
+                        D3D12_STATIC_SAMPLER_DESC //
+                        {
+                            FilterTypeToD3D12Filter(SamDesc.MinFilter, SamDesc.MagFilter, SamDesc.MipFilter),
+                            TexAddressModeToD3D12AddressMode(SamDesc.AddressU),
+                            TexAddressModeToD3D12AddressMode(SamDesc.AddressV),
+                            TexAddressModeToD3D12AddressMode(SamDesc.AddressW),
+                            SamDesc.MipLODBias,
+                            SamDesc.MaxAnisotropy,
+                            ComparisonFuncToD3D12ComparisonFunc(SamDesc.ComparisonFunc),
+                            BorderColorToD3D12StaticBorderColor(SamDesc.BorderColor),
+                            SamDesc.MinLOD,
+                            SamDesc.MaxLOD,
+                            SampAttr.ShaderRegister + ArrInd,
+                            SampAttr.RegisterSpace,
+                            ShaderTypeToD3D12ShaderVisibility(ImtblSam.ShaderStages) //
+                        }                                                            //
+                    );
+                }
             }
         }
     }
 
     rootSignatureDesc.NumParameters = static_cast<UINT>(D3D12Parameters.size());
     rootSignatureDesc.pParameters   = D3D12Parameters.size() ? D3D12Parameters.data() : nullptr;
-    /*
-    UINT TotalD3D12StaticSamplers = 0;
-    for (const auto& ImtblSam : m_ImmutableSamplers)
-    {
-        TotalD3D12StaticSamplers += ImtblSam.ArraySize;
-    }
+
     rootSignatureDesc.NumStaticSamplers = TotalD3D12StaticSamplers;
     rootSignatureDesc.pStaticSamplers   = nullptr;
-    std::vector<D3D12_STATIC_SAMPLER_DESC, STDAllocatorRawMem<D3D12_STATIC_SAMPLER_DESC>> D3D12StaticSamplers(STD_ALLOCATOR_RAW_MEM(D3D12_STATIC_SAMPLER_DESC, GetRawAllocator(), "Allocator for vector<D3D12_STATIC_SAMPLER_DESC>"));
-    D3D12StaticSamplers.reserve(TotalD3D12StaticSamplers);
-    if (!m_ImmutableSamplers.empty())
+    if (!D3D12StaticSamplers.empty())
     {
-        for (size_t s = 0; s < m_ImmutableSamplers.size(); ++s)
-        {
-            const auto& ImtblSmplr = m_ImmutableSamplers[s];
-            const auto& SamDesc    = ImtblSmplr.Desc;
-            for (UINT ArrInd = 0; ArrInd < ImtblSmplr.ArraySize; ++ArrInd)
-            {
-                D3D12StaticSamplers.emplace_back(
-                    D3D12_STATIC_SAMPLER_DESC //
-                    {
-                        FilterTypeToD3D12Filter(SamDesc.MinFilter, SamDesc.MagFilter, SamDesc.MipFilter),
-                        TexAddressModeToD3D12AddressMode(SamDesc.AddressU),
-                        TexAddressModeToD3D12AddressMode(SamDesc.AddressV),
-                        TexAddressModeToD3D12AddressMode(SamDesc.AddressW),
-                        SamDesc.MipLODBias,
-                        SamDesc.MaxAnisotropy,
-                        ComparisonFuncToD3D12ComparisonFunc(SamDesc.ComparisonFunc),
-                        BorderColorToD3D12StaticBorderColor(SamDesc.BorderColor),
-                        SamDesc.MinLOD,
-                        SamDesc.MaxLOD,
-                        ImtblSmplr.ShaderRegister + ArrInd,
-                        ImtblSmplr.RegisterSpace,
-                        ShaderTypeToD3D12ShaderVisibility(ImtblSmplr.ShaderType) //
-                    }                                                            //
-                );
-            }
-        }
         rootSignatureDesc.pStaticSamplers = D3D12StaticSamplers.data();
-
         VERIFY_EXPR(D3D12StaticSamplers.size() == TotalD3D12StaticSamplers);
     }
-    */
 
     CComPtr<ID3DBlob> signature;
     CComPtr<ID3DBlob> error;
@@ -179,7 +188,7 @@ void RootSignature::Create(RenderDeviceD3D12Impl* pDeviceD3D12Impl, PIPELINE_TYP
     }
     CHECK_D3D_RESULT_THROW(hr, "Failed to serialize root signature");
 
-    auto* pd3d12Device = pDeviceD3D12Impl->GetD3D12Device();
+    auto* pd3d12Device = m_pDeviceD3D12Impl->GetD3D12Device();
 
     hr = pd3d12Device->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), __uuidof(m_pd3d12RootSignature), reinterpret_cast<void**>(static_cast<ID3D12RootSignature**>(&m_pd3d12RootSignature)));
     CHECK_D3D_RESULT_THROW(hr, "Failed to create root signature");
@@ -187,14 +196,14 @@ void RootSignature::Create(RenderDeviceD3D12Impl* pDeviceD3D12Impl, PIPELINE_TYP
 
 
 
-LocalRootSignature::LocalRootSignature(const char* pCBName, Uint32 ShaderRecordSize) :
+LocalRootSignatureD3D12::LocalRootSignatureD3D12(const char* pCBName, Uint32 ShaderRecordSize) :
     m_pName{pCBName},
     m_ShaderRecordSize{ShaderRecordSize}
 {
     VERIFY_EXPR((m_pName != nullptr) == (m_ShaderRecordSize > 0));
 }
 
-bool LocalRootSignature::IsShaderRecord(const D3DShaderResourceAttribs& CB)
+bool LocalRootSignatureD3D12::IsShaderRecord(const D3DShaderResourceAttribs& CB)
 {
     if (m_ShaderRecordSize > 0 &&
         CB.GetInputType() == D3D_SIT_CBUFFER &&
@@ -205,10 +214,12 @@ bool LocalRootSignature::IsShaderRecord(const D3DShaderResourceAttribs& CB)
     return false;
 }
 
-ID3D12RootSignature* LocalRootSignature::Create(ID3D12Device* pDevice)
+ID3D12RootSignature* LocalRootSignatureD3D12::Create(ID3D12Device* pDevice)
 {
     if (m_ShaderRecordSize == 0 || m_BindPoint == InvalidBindPoint)
         return nullptr;
+
+    VERIFY(m_pd3d12RootSignature == nullptr, "This root signature is already created");
 
     D3D12_ROOT_SIGNATURE_DESC d3d12RootSignatureDesc = {};
     D3D12_ROOT_PARAMETER      d3d12Params            = {};
@@ -231,6 +242,74 @@ ID3D12RootSignature* LocalRootSignature::Create(ID3D12Device* pDevice)
     CHECK_D3D_RESULT_THROW(hr, "Failed to create D3D12 local root signature");
 
     return m_pd3d12RootSignature;
+}
+
+
+
+bool RootSignatureCacheD3D12::RootSignatureCompare::operator()(const RootSignatureD3D12* lhs, const RootSignatureD3D12* rhs) const noexcept
+{
+    const Uint32 LSigCount = lhs->GetSignatureCount();
+    const Uint32 RSigCount = rhs->GetSignatureCount();
+
+    if (LSigCount != RSigCount)
+        return false;
+
+    for (Uint32 i = 0; i < LSigCount; ++i)
+    {
+        auto* pLSig = lhs->GetSignature(i);
+        auto* pRSig = rhs->GetSignature(i);
+
+        if (pLSig == pRSig)
+            continue;
+
+        if ((pLSig == nullptr) != (pRSig == nullptr))
+            return false;
+
+        if (!pLSig->IsCompatibleWith(*pRSig))
+            return false;
+    }
+    return true;
+}
+
+RootSignatureCacheD3D12::RootSignatureCacheD3D12(RenderDeviceD3D12Impl& DeviceD3D12Impl) :
+    m_DeviceD3D12Impl{DeviceD3D12Impl}
+{}
+
+RootSignatureCacheD3D12::~RootSignatureCacheD3D12()
+{
+    std::lock_guard<std::mutex> Lock{m_RootSigCacheGuard};
+    VERIFY(m_RootSigCache.empty(), "All pipeline layouts must be released");
+}
+
+RefCntAutoPtr<RootSignatureD3D12> RootSignatureCacheD3D12::GetRootSig(const RefCntAutoPtr<PipelineResourceSignatureD3D12Impl>* ppSignatures, Uint32 SignatureCount)
+{
+    RefCntAutoPtr<RootSignatureD3D12> pNewRootSig;
+    m_DeviceD3D12Impl.CreateRootSignature(ppSignatures, SignatureCount, &pNewRootSig);
+
+    if (pNewRootSig == nullptr)
+        return {};
+
+    RefCntAutoPtr<RootSignatureD3D12> Result;
+    {
+        std::lock_guard<std::mutex> Lock{m_RootSigCacheGuard};
+
+        auto IterAndFlag = m_RootSigCache.insert(pNewRootSig);
+
+        if (IterAndFlag.second)
+            pNewRootSig.Detach()->Finalize();
+
+        Result.Attach(*IterAndFlag.first);
+    }
+    return Result;
+}
+
+void RootSignatureCacheD3D12::OnDestroyRootSig(RootSignatureD3D12* pRootSig)
+{
+    std::lock_guard<std::mutex> Lock{m_RootSigCacheGuard};
+
+    auto Iter = m_RootSigCache.find(pRootSig);
+    if (Iter != m_RootSigCache.end() && *Iter == pRootSig)
+        m_RootSigCache.erase(Iter);
 }
 
 } // namespace Diligent

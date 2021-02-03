@@ -83,7 +83,7 @@ public:
         m_ResourceCache{ResourceCache}
     {}
 
-    void Initialize(const PipelineResourceSignatureD3D12Impl& Layout,
+    void Initialize(const PipelineResourceSignatureD3D12Impl& Signature,
                     IMemoryAllocator&                         Allocator,
                     const SHADER_RESOURCE_VARIABLE_TYPE*      AllowedVarTypes,
                     Uint32                                    NumAllowedTypes,
@@ -97,7 +97,7 @@ public:
 
     void BindResources(IResourceMapping* pResourceMapping, Uint32 Flags);
 
-    static size_t GetRequiredMemorySize(const PipelineResourceSignatureD3D12Impl& Layout,
+    static size_t GetRequiredMemorySize(const PipelineResourceSignatureD3D12Impl& Signature,
                                         const SHADER_RESOURCE_VARIABLE_TYPE*      AllowedVarTypes,
                                         Uint32                                    NumAllowedTypes,
                                         SHADER_TYPE                               ShaderType,

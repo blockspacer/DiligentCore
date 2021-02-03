@@ -693,6 +693,9 @@ Uint32 PipelineResourceSignatureVkImpl::FindAssignedSampler(const PipelineResour
 
 size_t PipelineResourceSignatureVkImpl::CalculateHash() const
 {
+    if (m_Desc.NumResources == 0 && m_Desc.NumImmutableSamplers == 0)
+        return 0;
+
     size_t Hash = ComputeHash(m_Desc.NumResources, m_Desc.NumImmutableSamplers, m_Desc.BindingIndex);
 
     for (Uint32 i = 0; i < m_Desc.NumResources; ++i)

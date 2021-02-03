@@ -28,9 +28,11 @@
 #pragma once
 
 /// \file
-/// Declaration of Diligent::RootSignature class
+/// Declaration of Diligent::RootSignatureD3D12 class
 #include <array>
-#include "BufferD3D12Impl.hpp"
+#include <mutex>
+#include <unordered_set>
+
 #include "D3D12TypeConversions.hpp"
 #include "ShaderResourceCacheD3D12.hpp"
 #include "PipelineResourceSignatureD3D12Impl.hpp"
@@ -44,15 +46,18 @@ class RenderDeviceD3D12Impl;
 class PipelineResourceSignatureD3D12Impl;
 
 /// Implementation of the Diligent::RootSignature class
-class RootSignature
+class RootSignatureD3D12 final : public ObjectBase<IObject>
 {
 public:
-    RootSignature();
+    RootSignatureD3D12(IReferenceCounters*                                      pRefCounters,
+                       RenderDeviceD3D12Impl*                                   pDeviceD3D12Impl,
+                       const RefCntAutoPtr<PipelineResourceSignatureD3D12Impl>* ppSignatures,
+                       Uint32                                                   SignatureCount);
+    ~RootSignatureD3D12();
 
-    void Create(RenderDeviceD3D12Impl* pDeviceD3D12Impl, PIPELINE_TYPE PipelineType, IPipelineResourceSignature** ppSignatures, Uint32 SignatureCount);
-    void InitResourceCache(RenderDeviceD3D12Impl* pDeviceD3D12Impl, class ShaderResourceCacheD3D12& ResourceCache, IMemoryAllocator& CacheMemAllocator) const;
+    void Finalize();
 
-    ID3D12RootSignature* GetD3D12RootSignature() const { return m_pd3d12RootSignature; }
+    size_t GetHash() const { return m_Hash; }
 
     Uint32 GetSignatureCount() const { return m_SignatureCount; }
 
@@ -62,22 +67,41 @@ public:
         return m_Signatures[index].RawPtr<PipelineResourceSignatureD3D12Impl>();
     }
 
+    ID3D12RootSignature* GetD3D12RootSignature() const
+    {
+        VERIFY_EXPR(m_pd3d12RootSignature);
+        return m_pd3d12RootSignature;
+    }
+
+    Uint32 GetFirstRootIndex(Uint32 BindingIndex) const
+    {
+        VERIFY_EXPR(BindingIndex < m_SignatureCount);
+        return m_FirstRootIndex[BindingIndex];
+    }
+
+    using SignatureArrayType = std::array<RefCntAutoPtr<PipelineResourceSignatureD3D12Impl>, MAX_RESOURCE_SIGNATURES>;
+
 private:
+    using FirstRootIndexArrayType            = std::array<Uint32, MAX_RESOURCE_SIGNATURES>; // AZ TODO: use 8 or 16 bit int
+    FirstRootIndexArrayType m_FirstRootIndex = {};
+
+    size_t                       m_Hash = 0;
     CComPtr<ID3D12RootSignature> m_pd3d12RootSignature;
 
     // The number of resource signatures used by this root signature
     // (Maximum is MAX_RESOURCE_SIGNATURES)
-    Uint8 m_SignatureCount = 0;
+    Uint8              m_SignatureCount = 0;
+    SignatureArrayType m_Signatures     = {};
 
-    using SignatureArray = std::array<RefCntAutoPtr<PipelineResourceSignatureD3D12Impl>, MAX_RESOURCE_SIGNATURES>;
-    SignatureArray m_Signatures;
+    RenderDeviceD3D12Impl* m_pDeviceD3D12Impl;
 };
 
 
-class LocalRootSignature
+
+class LocalRootSignatureD3D12
 {
 public:
-    LocalRootSignature(const char* pCBName, Uint32 ShaderRecordSize);
+    LocalRootSignatureD3D12(const char* pCBName, Uint32 ShaderRecordSize);
 
     bool IsShaderRecord(const D3DShaderResourceAttribs& CB);
 
@@ -90,6 +114,48 @@ private:
     Uint32                       m_BindPoint        = InvalidBindPoint;
     const Uint32                 m_ShaderRecordSize = 0;
     CComPtr<ID3D12RootSignature> m_pd3d12RootSignature;
+};
+
+
+
+class RootSignatureCacheD3D12
+{
+public:
+    RootSignatureCacheD3D12(RenderDeviceD3D12Impl& DeviceD3D12Impl);
+
+    // clang-format off
+    RootSignatureCacheD3D12             (const RootSignatureCacheD3D12&) = delete;
+    RootSignatureCacheD3D12             (RootSignatureCacheD3D12&&)      = delete;
+    RootSignatureCacheD3D12& operator = (const RootSignatureCacheD3D12&) = delete;
+    RootSignatureCacheD3D12& operator = (RootSignatureCacheD3D12&&)      = delete;
+    // clang-format on
+
+    ~RootSignatureCacheD3D12();
+
+    RefCntAutoPtr<RootSignatureD3D12> GetRootSig(const RefCntAutoPtr<PipelineResourceSignatureD3D12Impl>* ppSignatures, Uint32 SignatureCount);
+
+    void OnDestroyRootSig(RootSignatureD3D12* pRootSig);
+
+private:
+    struct RootSignatureHash
+    {
+        std::size_t operator()(const RootSignatureD3D12* Key) const noexcept
+        {
+            return Key->GetHash();
+        }
+    };
+
+    struct RootSignatureCompare
+    {
+        bool operator()(const RootSignatureD3D12* lhs, const RootSignatureD3D12* rhs) const noexcept;
+    };
+
+private:
+    RenderDeviceD3D12Impl& m_DeviceD3D12Impl;
+
+    std::mutex m_RootSigCacheGuard;
+
+    std::unordered_set<RootSignatureD3D12*, RootSignatureHash, RootSignatureCompare> m_RootSigCache;
 };
 
 } // namespace Diligent
